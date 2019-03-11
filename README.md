@@ -36,6 +36,19 @@ ssh -R 6444:localhost:6444 {current username}@{current workstation hostname / ip
 ```
 3.  Move to **General** section.
 
+### Instructions for OVA deployment (partial collection):
+1. Connect to the target appliance via SSH then switch to the _root user_ using the following commands:
+```
+ssh apicadm@{ova appliance hostname}
+sudo -i
+```
+2.  Download the script using the following command:
+```
+curl -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconnect/v2018-postmortem/master/generate_postmortem.sh
+```
+3.  Add execution permissions to file using the command `chmod +x generate_postmortem.sh`.
+4.  Run the tool using the command `./generate_postmortem.sh --no-apicup`.
+
 ### General
 1.  Make sure the **helm** command is installed, compatibile and connected (using `helm init`) with the Kubernetes cluster.
 2.  Download the script to the _apicup project_ directory using the following command:
