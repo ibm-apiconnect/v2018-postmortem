@@ -40,7 +40,7 @@ ssh -R 6444:localhost:6444 {current username}@{current workstation hostname / ip
 1.  Make sure the **helm** command is installed, compatibile and connected (using `helm init`) with the Kubernetes cluster.
 2.  Download the script to the _apicup project_ directory using the following command:
 ```
-curl -o generate_postmortem.sh https://raw.github.ibm.com/cjohnso/v2018-postmortem-tool/master/generate_postmortem.sh?token=AAAaGYWjZYYhjXVngKLlH3FUWpV6yB5yks5cgvWdwA%3D%3D
+curl -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconnect/v2018-postmortem/master/generate_postmortem.sh
 ```
 3.  Add execution permissions to file using the command `chmod +x generate_postmortem.sh`.
 4.  Run the tool using the command `./generate_postmortem.sh` from the _apicup project_ directory.
