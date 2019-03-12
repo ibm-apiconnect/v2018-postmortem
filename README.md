@@ -9,7 +9,8 @@ export APICUP_PROJECT_PATH="/path/to/directory"
 
 ## Instructions
 ### Kubernetes deployment:
-1.  Make sure the **kubectl** command is installed and configured to the Kubernetes cluster.  See following commands to complete this task.
+1.  Make sure the **kubectl** command is installed.
+2.  Make sure the **kubectl** is configured to the Kubernetes cluster.  See following commands to complete this task.
 ```
 rm -fr $HOME/.kube
 mkdir -p $HOME/.kube
@@ -18,7 +19,8 @@ scp root@{kubernetes_master_host}:/etc/kubernetes/admin.conf $HOME/.kube/config
 2.  Move to **General** section.
 
 ### Instructions for OVA deployment:
-1.  Make sure the **kubectl** command is installed and configured to the Kubernetes cluster.  See following commands to complete this task.
+1.  Make sure the **kubectl** command is installed.
+2.  Make sure the **kubectl** command is configured to the Kubernetes cluster.  See following commands to complete this task.
 ```
 ssh apicadm@{ova appliance hostname}
 sudo cp /etc/kubernetes/admin.conf $HOME/admin.conf
@@ -50,7 +52,12 @@ curl -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconnect/
 4.  Run the tool using the command `./generate_postmortem.sh --no-apicup`.
 
 ### General
-1.  Make sure the **helm** command is installed, compatibile and connected (using `helm init`) with the Kubernetes cluster.
+1.  Make sure the **helm** command is installed, compatibile and connected to the Kubernetes cluster.  See the following commands to complete this task.
+```
+rm -fr $HOME/.helm
+curl -s https://raw.githubusercontent.com/helm/helm/master/scripts/get | bash -s -- --version v2.8.2
+helm init --client-only
+```
 2.  Download the script to the _apicup project_ directory using the following command:
 ```
 curl -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconnect/v2018-postmortem/master/generate_postmortem.sh

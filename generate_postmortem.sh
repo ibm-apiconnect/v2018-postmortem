@@ -106,7 +106,11 @@ if [[ $? -ne 0 ]]; then
 fi
 #------------------------------------------------------------------------------------------------------
 
-#------------------------------------ XML to generate error report ------------------------------------
+#------------------------------------------ custom functions ------------------------------------------
+#compare versions
+function version_gte() { test "$1" == "$2" || test "$(printf '%s\n' "$@" | sort -V | head -n 1)" != "$1"; }
+
+#XML to generate error report
 function generateXmlForErrorReport()
 {
 cat << EOF > $1
@@ -134,6 +138,13 @@ TEMP_PATH="${LOG_PATH}/${TEMP_NAME}"
 
 NAMESPACE_LIST="kube-system"
 ARCHIVE_FILE=""
+
+MIN_DOCKER_VERSION="17.03"
+MIN_KUBELET_VERSION="1.10"
+
+COLOR_YELLOW=`tput setaf 3`
+COLOR_WHITE=`tput setaf 7`
+COLOR_RESET=`tput sgr0`
 #------------------------------------------------------------------------------------------------------
 
 #------------------------------------------- Clean up area --------------------------------------------
@@ -352,22 +363,45 @@ if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
         name=`echo "$line" | awk -F ' ' '{print $1}'`
         role=`echo "$line" | awk -F ' ' '{print $3}'`
 
-        if [[ -z "$role" ]]; then
-            kubectl describe node $name 1>"${K8S_CLUSTER_NODE_DATA}/describe-${name}.out" 2>/dev/null
-            [ $? -eq 0 ] || rm -f "${K8S_CLUSTER_NODE_DATA}/describe-${name}.out"
-        else
-            kubectl describe node $name &> "${K8S_CLUSTER_NODE_DATA}/describe-${name}_${role}.out"
-            [ $? -eq 0 ] || rm -f "${K8S_CLUSTER_NODE_DATA}/describe-${name}_${role}.out"
-        fi
-
-        if [[ -z "$ARCHIVE_FILE" && "$role" == *"master"* ]]; then
-            host=`echo $name | cut -d'.' -f1`
-            if [[ -z "$host" ]]; then
-                ARCHIVE_FILE="${LOG_PATH}/apiconnect-logs-${TIMESTAMP}"
+        describe_stdout=`kubectl describe node $name 2>/dev/null`
+        if [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]]; then
+            if [[ -z "$role" ]]; then
+                echo "$describe_stdout" > "${K8S_CLUSTER_NODE_DATA}/describe-${name}.out"
             else
-                ARCHIVE_FILE="${LOG_PATH}/apiconnect-logs-${host}-${TIMESTAMP}"
+                echo "$describe_stdout" > "${K8S_CLUSTER_NODE_DATA}/describe-${name}_${role}.out"
+            fi
+
+            if [[ -z "$ARCHIVE_FILE" && "$role" == *"master"* ]]; then
+                host=`echo $name | cut -d'.' -f1`
+                if [[ -z "$host" ]]; then
+                    ARCHIVE_FILE="${LOG_PATH}/apiconnect-logs-${TIMESTAMP}"
+                else
+                    ARCHIVE_FILE="${LOG_PATH}/apiconnect-logs-${host}-${TIMESTAMP}"
+                fi
+            fi
+
+            #check the docker / kubelet versions
+            docker_version=`echo "$describe_stdout" | grep -i docker | awk -F'//' '{print $2}'`
+            kubelet_version=`echo "$describe_stdout" | grep "Kubelet Version:" | awk -F' ' '{print $NF}' | awk -F'v' '{print $2}'`
+
+            version_gte $docker_version $MIN_DOCKER_VERSION
+            if [[ $? -ne 0 ]]; then
+                warning1="WARNING!  Node "
+                warning2=" docker version [$docker_version] less than minimum [$MIN_DOCKER_VERSION]."
+                echo -e "${COLOR_YELLOW}${warning1}${COLOR_WHITE}$name${COLOR_YELLOW}${warning2}${COLOR_RESET}"
+                echo -e "${warning1}${name}${warning2}" >> "${K8S_DATA}/warnings.out"
+            fi
+
+            version_gte $kubelet_version $MIN_KUBELET_VERSION
+            if [[ $? -ne 0 ]]; then
+                warning1="WARNING!  Node "
+                warning2=" kubelet version [$kubelet_version] less than minimum [$MIN_KUBELET_VERSION]."
+                echo -e "${COLOR_YELLOW}${warning1}${COLOR_WHITE}$name${COLOR_YELLOW}${warning2}${COLOR_RESET}"
+                echo -e "${warning1}${name}${warning2}" >> "${K8S_DATA}/warnings.out"
             fi
         fi
+        
+        
     done <<< "$OUTPUT"
 
     if [[ $OUTPUT_METRICS -eq 0 ]]; then
