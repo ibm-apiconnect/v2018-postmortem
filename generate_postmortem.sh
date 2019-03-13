@@ -364,7 +364,7 @@ if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
         role=`echo "$line" | awk -F ' ' '{print $3}'`
 
         describe_stdout=`kubectl describe node $name 2>/dev/null`
-        if [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]]; then
+        if [[ $? -eq 0 && ${#describe_stdout} -gt 0 ]]; then
             if [[ -z "$role" ]]; then
                 echo "$describe_stdout" > "${K8S_CLUSTER_NODE_DATA}/describe-${name}.out"
             else
