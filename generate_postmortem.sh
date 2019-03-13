@@ -139,6 +139,8 @@ TEMP_PATH="${LOG_PATH}/${TEMP_NAME}"
 NAMESPACE_LIST="kube-system"
 ARCHIVE_FILE=""
 
+ERROR_REPORT_SLEEP_TIMEOUT=30
+
 MIN_DOCKER_VERSION="17.03"
 MIN_KUBELET_VERSION="1.10"
 
@@ -630,22 +632,26 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
                 #only proceed with error report if response status code is 200
                 if [[ $response -eq 200 ]]; then
+                    
+                    #pull error report
                     echo -e "Pausing for error report to generate..."
-                    sleep 20
+                    sleep $ERROR_REPORT_SLEEP_TIMEOUT
 
                     #this will give a link that points to the target error report
                     kubectl cp -n $NAMESPACE "${pod}:/drouter/temporary/error-report.txt.gz" "${LOG_TARGET_PATH}/error-report.txt.gz" &>/dev/null
 
                     #extract path
                     REPORT_PATH=`ls -l ${LOG_TARGET_PATH} | grep error-report.txt.gz | awk -F' ' '{print $NF}'`
-                    #extract filename from path
-                    REPORT_NAME=$(basename $REPORT_PATH)
+                    if [[ ! -v "$REPORT_PATH" ]]; then
+                        #extract filename from path
+                        REPORT_NAME=$(basename $REPORT_PATH)
+
+                        #grab error report
+                        kubectl cp -n $NAMESPACE "${pod}:${REPORT_PATH}" "${LOG_TARGET_PATH}/${REPORT_NAME}" &>/dev/null
+                    fi
 
                     #remove link
                     rm -f "${LOG_TARGET_PATH}/error-report.txt.gz"
-
-                    #grab error report
-                    kubectl cp -n $NAMESPACE "${pod}:${REPORT_PATH}" "${LOG_TARGET_PATH}/${REPORT_NAME}" &>/dev/null
                 fi
 
                 #clean up
