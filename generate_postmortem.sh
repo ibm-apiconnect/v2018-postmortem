@@ -182,10 +182,10 @@ if [[ -z "$NO_APICUP" ]]; then
     #----------------------------------------- create directories -----------------------------------------
     APICUP_DATA="${TEMP_PATH}/apicup"
     APICUP_CERTS_DATA="${APICUP_DATA}/certs"
-    APICUP_ENDPOINTS_DATA="${APICUP_DATA}/endpoints"
+    APICUP_ENDPOINT_DATA="${APICUP_DATA}/endpoints"
 
     mkdir -p $APICUP_CERTS_DATA
-    mkdir -p $APICUP_ENDPOINTS_DATA
+    mkdir -p $APICUP_ENDPOINT_DATA
     #------------------------------------------------------------------------------------------------------
     cd $APICUP_PROJECT_PATH
 
@@ -213,7 +213,7 @@ if [[ -z "$NO_APICUP" ]]; then
             #check each endpoint using nslookup
             OUTPUT2=`apicup subsys get $line1 2>/dev/null`
             START_READ=0
-            i=-0
+            i=0
             while read line2; do
                 if [[ "${line2,,}" == *"endpoints"* ]]; then
                     i=4
@@ -223,11 +223,11 @@ if [[ -z "$NO_APICUP" ]]; then
                 elif [[ $START_READ -eq 1 && $i -eq 0 && ${#line2} -eq 0 ]]; then
                     break
                 elif [[ $START_READ -eq 1 && $i -eq 0 ]]; then
-                    NAME=`echo "$line2" | awk -F' ' '{print $1}'`
-                    ENDPOINT=`echo "$line2" | awk -F' ' '{print $2}'`
+                    name=`echo "$line2" | awk -F' ' '{print $1}'`
+                    endpoint=`echo "$line2" | awk -F' ' '{print $2}'`
 
-                    echo -e "$ nslookup $ENDPOINT\n" >"${APICUP_ENDPOINTS_DATA}/nslookup-${NAME}.out"
-                    kubectl exec -ti busybox -- nslookup $ENDPOINT &>>"${APICUP_ENDPOINTS_DATA}/nslookup-${NAME}.out"
+                    echo -e "$ nslookup $endpoint\n" >"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
+                    kubectl exec busybox -- nslookup $endpoint &>>"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
                 fi
             done <<< "$OUTPUT2"
         fi
@@ -470,6 +470,10 @@ for NAMESPACE in $NAMESPACE_LIST; do
     K8S_NAMESPACES_LIST_DATA="${K8S_NAMESPACES_SPECIFIC}/lists"
     K8S_NAMESPACES_STORAGE_DATA="${K8S_NAMESPACES_SPECIFIC}/storage"
 
+    K8S_NAMESPACES_CONFIGMAP_DATA="${K8S_NAMESPACES_SPECIFIC}/configmaps"
+    K8S_NAMESPACES_CONFIGMAP_YAML_OUTPUT="${K8S_NAMESPACES_CONFIGMAP_DATA}/yaml"
+    K8S_NAMESPACES_CONFIGMAP_DESCRIBE_DATA="${K8S_NAMESPACES_CONFIGMAP_DATA}/describe"
+
     K8S_NAMESPACES_JOB_DATA="${K8S_NAMESPACES_SPECIFIC}/jobs"
     K8S_NAMESPACES_JOB_DESCRIBE_DATA="${K8S_NAMESPACES_JOB_DATA}/describe"
 
@@ -488,6 +492,9 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
     mkdir -p $K8S_NAMESPACES_LIST_DATA
     mkdir -p $K8S_NAMESPACES_STORAGE_DATA
+
+    mkdir -p $K8S_NAMESPACES_CONFIGMAP_YAML_OUTPUT
+    mkdir -p $K8S_NAMESPACES_CONFIGMAP_DESCRIBE_DATA
 
     mkdir -p $K8S_NAMESPACES_JOB_DESCRIBE_DATA
 
@@ -533,6 +540,22 @@ for NAMESPACE in $NAMESPACE_LIST; do
         done <<< "$OUTPUT"
     else
         rm -fr $K8S_NAMESPACES_JOB_DATA
+    fi
+
+    #grab configmap data
+    OUTPUT=`kubectl get configmaps -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_CONFIGMAP_DATA}/configmaps.out"
+        while read line; do
+            cm=`echo "$line" | cut -d' ' -f1`
+            kubectl get configmap $cm -n $NAMESPACE -o yaml &>"${K8S_NAMESPACES_CONFIGMAP_YAML_OUTPUT}/${cm}.yaml"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CONFIGMAP_YAML_OUTPUTA}/${cm}.yaml"
+
+            kubectl describe configmap $cm -n $NAMESPACE &> "${K8S_NAMESPACES_CONFIGMAP_DESCRIBE_DATA}/${cm}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CONFIGMAP_DESCRIBE_DATA}/${cm}.out"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_CONFIGMAP_DATA
     fi
 
     #grab pod data
@@ -584,7 +607,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
                     elif [[ "$SUBSYS_PORTAL" == *"$pod_helm_release"* ]]; then
                         SUBFOLDER="portal"
                     else
-                        SUBFOLDER=""
+                        SUBFOLDER="other"
                     fi
 
                     DESCRIBE_TARGET_PATH="${K8S_NAMESPACES_POD_DESCRIBE_DATA}/${SUBFOLDER}"
