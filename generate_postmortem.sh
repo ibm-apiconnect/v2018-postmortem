@@ -469,6 +469,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
     K8S_NAMESPACES_LIST_DATA="${K8S_NAMESPACES_SPECIFIC}/lists"
     K8S_NAMESPACES_STORAGE_DATA="${K8S_NAMESPACES_SPECIFIC}/storage"
+    K8S_NAMESPACES_CASSANDRA_DATA="${K8S_NAMESPACES_SPECIFIC}/cassandra"
 
     K8S_NAMESPACES_CONFIGMAP_DATA="${K8S_NAMESPACES_SPECIFIC}/configmaps"
     K8S_NAMESPACES_CONFIGMAP_YAML_OUTPUT="${K8S_NAMESPACES_CONFIGMAP_DATA}/yaml"
@@ -492,6 +493,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
     mkdir -p $K8S_NAMESPACES_LIST_DATA
     mkdir -p $K8S_NAMESPACES_STORAGE_DATA
+    mkdir -p $K8S_NAMESPACES_CASSANDRA_DATA
 
     mkdir -p $K8S_NAMESPACES_CONFIGMAP_YAML_OUTPUT
     mkdir -p $K8S_NAMESPACES_CONFIGMAP_DESCRIBE_DATA
@@ -518,8 +520,29 @@ for NAMESPACE in $NAMESPACE_LIST; do
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/secrets.out"
     OUTPUT=`kubectl get svc -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/services.out"
-    OUTPUT=`kubectl get cassandraclusters –n $NAMESPACE 2>/dev/null`
-    [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/cassandraclusters.out"
+
+
+    #grab cassandra data
+    OUTPUT=`kubectl get cassandraclusters -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_CASSANDRA_DATA}/cassandraclusters.out"
+
+        while read line; do
+            cc=`echo "$line" | cut -d' ' -f1`
+            kubectl describe cassandracluster $cc -n $NAMESPACE &> "${K8S_NAMESPACES_CASSANDRA_DATA}/${cc}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CASSANDRA_DATA}/${cc}.out"
+        done <<< "$OUTPUT"
+
+        #nodetool status
+        OUTPUT=`kubectl get pods -n $NAMESPACE 2>/dev/null | grep "\-cc\-" | grep -v "stats" | grep -v "repair"`
+        while read line; do
+            pod=`echo "${OUTPUT}" | awk -F' ' '{print $1}'`
+            kubectl exec -n $NAMESPACE $pod -- nodetool status &>"${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_CASSANDRA_DATA
+    fi
 
     #grab storage data
     OUTPUT=`kubectl get pvc -n $NAMESPACE 2>/dev/null`
