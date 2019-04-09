@@ -8,7 +8,7 @@ export APICUP_PROJECT_PATH="/path/to/directory"
 
 
 ## Instructions
-### Instructions for OVA deployment:
+### OVA deployment:f
 1. Connect to the target appliance via SSH then switch to the _root user_ using the following commands:
 ```
 ssh apicadm@{ova appliance hostname}
