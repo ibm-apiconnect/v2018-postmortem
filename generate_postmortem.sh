@@ -877,7 +877,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
             mkdir -p $TRANSFORM_DIRECTORY
 
             LOG_FILES=`ls -1 $TARGET_DIRECTORY | egrep "portal-www...${container}"`
-            grep . $LOG_FILES | sed 's/:\[/[ /' | sort -k6,7 >$INTERLACED_LOG_FILE
+            grep . $LOG_FILES | sed 's/:\[/[ /' | sort -k5,6 >$INTERLACED_LOG_FILE
 
             cd $TRANSFORM_DIRECTORY
             OUTPUT=`sed 's/\[\([ a-z0-9_\-]*\) std\(out\|err\)\].*/\1/' $INTERLACED_LOG_FILE | sed 's/^ *//' | sort -u`
