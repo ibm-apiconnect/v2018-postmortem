@@ -21,7 +21,13 @@ for switch in $@; do
             echo -e 'Set using command:  export APICUP_PROJECT_PATH="/path/to/directory"'
             echo -e 'If apicup project is not available, pass the switch "--no-apicup"'
             echo -e ""
-            echo -e 'To enable debug pass the switch "--debug"'
+            echo -e "Available switches:"
+            echo -e "--debug:               Set to enable verbose loggiing."
+            echo -e "--diagnostic-all:      Set to enable all diagnostic data."
+            echo -e "--diagnostic-gateway:  Set to include additional gateway specific data."
+            echo -e "--diagnostic-portal:   Set to include additional portal specific data."
+            echo -e "--no-apicup:           Set if Install Assist project directory is not available."
+            echo -e "--ova:                 Only set if running inside an OVA deployment."
             echo -e ""
             exit 0
             ;;
@@ -34,6 +40,25 @@ for switch in $@; do
             ;;
         *"--no-apicup"*)
             NO_APICUP=1
+            ;;
+        *"--ova"*)
+            NO_APICUP=1
+            CAPTURE_OS_LOGS=1
+
+            #turn on history collection for script
+            HISTFILE=~/.bash_history
+            HISTTIMEFORMAT="%Y-%m-%d %T - "
+            set -o history
+            ;;
+        *"--diagnostic-all"*)
+            DIAG_GATEWAY=1
+            DIAG_PORTAL=1
+            ;;
+        *"--diagnostic-gateway"*)
+            DIAG_GATEWAY=1
+            ;;
+        *"--diagnostic-portal"*)
+            DIAG_PORTAL=1
             ;;
         *)
             if [[ "$switch" =~ ^[0-9]+$ ]]; then
@@ -247,6 +272,16 @@ if [[ -z "$NO_APICUP" ]]; then
 fi
 #=================================================================================================================
 
+#================================================= pull ova data =================================================
+if [[ ! -z "$CAPTURE_OS_LOGS" ]]; then
+    OVA_DATA="${TEMP_PATH}/ova"
+    mkdir -p $OVA_DATA
+
+    #grab bash history
+    history &>"${OVA_DATA}/bash_history.out"
+fi
+#=================================================================================================================
+
 #================================================= pull helm data ================================================
 #----------------------------------------- create directories -----------------------------------------
 HELM_DATA="${TEMP_PATH}/helm"
@@ -352,9 +387,8 @@ mkdir -p $K8S_CLUSTER_STORAGE_DATA
 
 #------------------------------------------------------------------------------------------------------
 
-#grab version
+#grab kubernetes version
 kubectl version 1>"${K8S_DATA}/kubectl.version" 2>/dev/null
-docker version 1>"${K8S_DATA}/docker.version" 2>/dev/null
 
 #----------------------------------- collect cluster specific data ------------------------------------
 #node
@@ -383,8 +417,10 @@ if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
             fi
 
             #check the docker / kubelet versions
-            docker_version=`echo "$describe_stdout" | grep -i docker | awk -F'//' '{print $2}'`
+            docker_version=`echo "$describe_stdout" | grep -i "Container Runtime Version" | awk -F'//' '{print $2}'`
             kubelet_version=`echo "$describe_stdout" | grep "Kubelet Version:" | awk -F' ' '{print $NF}' | awk -F'v' '{print $2}'`
+
+            echo "$docker_version" >"${K8S_DATA}/docker-${name}.version"
 
             version_gte $docker_version $MIN_DOCKER_VERSION
             if [[ $? -ne 0 ]]; then
@@ -480,6 +516,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
     K8S_NAMESPACES_POD_DATA="${K8S_NAMESPACES_SPECIFIC}/pods"
     K8S_NAMESPACES_POD_DESCRIBE_DATA="${K8S_NAMESPACES_POD_DATA}/describe"
+    K8S_NAMESPACES_POD_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DATA}/diagnostic"
     K8S_NAMESPACES_POD_LOG_DATA="${K8S_NAMESPACES_POD_DATA}/logs"
 
     K8S_NAMESPACES_ROLE_DATA="${K8S_NAMESPACES_SPECIFIC}/roles"
@@ -589,10 +626,12 @@ for NAMESPACE in $NAMESPACE_LIST; do
             pod=`echo "$line" | awk -F ' ' '{print $1}'`
             ready=`echo "$line" | awk -F ' ' '{print $2}'`
             status=`echo "$line" | awk -F ' ' '{print $3}'`
+            node=`echo "$line" | awk -F ' ' '{print $7}'`
             pod_helm_release=`echo "$pod" | awk -F '-' '{print $1}'`
 
             IS_INGRESS=0
             IS_GATEWAY=0
+            IS_PORTAL=0
 
             case $NAMESPACE in
                 "kube-system")
@@ -628,6 +667,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
                     elif [[ "$SUBSYS_CASSANDRA_OPERATOR" == *"$pod_helm_release"* ]]; then
                         SUBFOLDER="manager"
                     elif [[ "$SUBSYS_PORTAL" == *"$pod_helm_release"* ]]; then
+                        IS_PORTAL=1
                         SUBFOLDER="portal"
                     else
                         SUBFOLDER="other"
@@ -655,7 +695,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
             fi
 
             #grab gateway data
-            if [[ $IS_GATEWAY -eq 1 && "$ready" == "1/1" && "$status" == "Running" ]]; then
+            if [[ $DIAG_GATEWAY -eq 1 && $IS_GATEWAY -eq 1 && "$ready" == "1/1" && "$status" == "Running" ]]; then
                 #grab gwd-log.log
                 kubectl cp -n $NAMESPACE "${pod}:/drouter/temporary/log/apiconnect/gwd-log.log" "${LOG_TARGET_PATH}/gwd-log.log" &>/dev/null
 
@@ -720,6 +760,57 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
                 kubectl logs --previous -n $NAMESPACE $pod -c $container $LOG_LIMIT &> "${LOG_TARGET_PATH}/${pod}_${container}_previous.log"
                 [[ $? -eq 0 && -s  "${LOG_TARGET_PATH}/${pod}_${container}_previous.log" ]] || rm -f "${LOG_TARGET_PATH}/${pod}_${container}_previous.log"
+
+                #grab portal data
+                if [[ $DIAG_PORTAL -eq 1 && $IS_PORTAL -eq 1 && "$status" == "Running" ]]; then
+                    PORTAL_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/portal/${node}/${container}"
+
+                    echo "${pod}" | grep -q "www"
+                    if [[ $? -eq 0 ]]; then
+                        case $container in
+                            "admin")
+                                mkdir -p $PORTAL_DIAGNOSTIC_DATA
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "/opt/ibm/bin/list_sites -p" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/list_sites-platform.out"
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "/opt/ibm/bin/list_sites -d" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/list_sites-database.out"
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "/opt/ibm/bin/list_platforms" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/list_platforms.out"
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "ls -lRAi --author --full-time" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/listing-all.out"
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "/opt/ibm/bin/status -u" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/status.out"
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "ps -efHww --sort=-pcpu" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/ps-cpu.out"
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "ps -efHww --sort=-rss | head -26" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/ps-rss.out"
+                                ;;
+                            "web")
+                                ;;
+                            *) ;;
+                        esac
+                    fi
+
+                    echo "${pod}" | grep -q "db"
+                    if [[ $? -eq 0 ]]; then
+                        case $container in
+                            "db")
+                                mkdir -p $PORTAL_DIAGNOSTIC_DATA
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "mysqldump portal" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/portal.dump" 
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "ls -lRAi --author --full-time" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/listing-all.out"
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "ps -efHww --sort=-pcpu" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/ps-cpu.out"
+                                OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "ps -efHww --sort=-rss | head -26" 2>"/dev/null"`
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/ps-rss.out"
+                                ;;
+                            "dbproxy")
+                                ;;
+                            *) ;;
+                        esac
+                    fi
+                fi
             done
         done <<< "$OUTPUT"
 
@@ -770,6 +861,32 @@ for NAMESPACE in $NAMESPACE_LIST; do
     else
         rm -fr $K8S_NAMESPACES_SA_DATA
     fi
+
+    #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ post processing ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    #transform portal data
+    TARGET_DIRECTORY="${K8S_NAMESPACES_POD_LOG_DATA}/portal"
+    CONTAINERS=(admin web)
+
+    if [[ -d "${TARGET_DIRECTORY}" ]]; then
+        for container in ${CONTAINERS[@]}; do
+            cd $TARGET_DIRECTORY
+
+            TRANSFORM_DIRECTORY="${TARGET_DIRECTORY}/transformed/${container}"
+            INTERLACED_LOG_FILE="${TRANSFORM_DIRECTORY}/logs_interlaced.out"
+
+            mkdir -p $TRANSFORM_DIRECTORY
+
+            LOG_FILES=`ls -1 $TARGET_DIRECTORY | egrep "portal-www...${container}"`
+            grep . $LOG_FILES | sed 's/:\[/[ /' | sort -k6,7 >$INTERLACED_LOG_FILE
+
+            cd $TRANSFORM_DIRECTORY
+            OUTPUT=`sed 's/\[\([ a-z0-9_\-]*\) std\(out\|err\)\].*/\1/' $INTERLACED_LOG_FILE | sed 's/^ *//' | sort -u`
+            while read tag; do
+                grep "^\[ *$tag " $INTERLACED_LOG_FILE >"${TRANSFORM_DIRECTORY}/${tag}.out"
+            done <<< "$OUTPUT"
+        done
+    fi
+    #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 done
 #------------------------------------------------------------------------------------------------------
 #=================================================================================================================
