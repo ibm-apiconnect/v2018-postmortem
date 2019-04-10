@@ -279,6 +279,9 @@ if [[ ! -z "$CAPTURE_OS_LOGS" ]]; then
 
     #grab bash history
     history &>"${OVA_DATA}/bash_history.out"
+
+    #grab syslog files
+    cp -f /var/log/syslog* $OVA_DATA
 fi
 #=================================================================================================================
 
