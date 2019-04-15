@@ -85,6 +85,9 @@ if [[ $# -eq 0 ]]; then
     LOG_LIMIT="--tail=10000"
     set +e
 fi
+if [[ -z "$LOG_LIMIT" ]]; then
+    LOG_LIMIT="--tail=10000"
+fi
 
 #====================================== Confirm pre-reqs and init variables ======================================
 #----------------------------------------- Validate everything ----------------------------------------
@@ -375,12 +378,15 @@ K8S_DATA="${TEMP_PATH}/kubernetes"
 
 K8S_CLUSTER="${K8S_DATA}/cluster"
 K8S_NAMESPACES="${K8S_DATA}/namespaces"
+K8S_VERSION="${K8S_DATA}/versions"
 
 K8S_CLUSTER_NODE_DATA="${K8S_CLUSTER}/nodes"
 K8S_CLUSTER_LIST_DATA="${K8S_CLUSTER}/lists"
 K8S_CLUSTER_ROLE_DATA="${K8S_CLUSTER}/clusterroles"
 K8S_CLUSTER_ROLEBINDING_DATA="${K8S_CLUSTER}/clusterrolebindings"
 K8S_CLUSTER_STORAGE_DATA="${K8S_CLUSTER}/storage"
+
+mkdir -p $K8S_VERSION
 
 mkdir -p $K8S_CLUSTER_NODE_DATA
 mkdir -p $K8S_CLUSTER_LIST_DATA
@@ -391,7 +397,7 @@ mkdir -p $K8S_CLUSTER_STORAGE_DATA
 #------------------------------------------------------------------------------------------------------
 
 #grab kubernetes version
-kubectl version 1>"${K8S_DATA}/kubectl.version" 2>/dev/null
+kubectl version 1>"${K8S_VERSION}/kubectl.version" 2>/dev/null
 
 #----------------------------------- collect cluster specific data ------------------------------------
 #node
@@ -423,7 +429,7 @@ if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
             docker_version=`echo "$describe_stdout" | grep -i "Container Runtime Version" | awk -F'//' '{print $2}'`
             kubelet_version=`echo "$describe_stdout" | grep "Kubelet Version:" | awk -F' ' '{print $NF}' | awk -F'v' '{print $2}'`
 
-            echo "$docker_version" >"${K8S_DATA}/docker-${name}.version"
+            echo "$docker_version" >"${K8S_VERSION}/docker-${name}.version"
 
             version_gte $docker_version $MIN_DOCKER_VERSION
             if [[ $? -ne 0 ]]; then
@@ -697,10 +703,13 @@ for NAMESPACE in $NAMESPACE_LIST; do
                 IS_INGRESS=0
             fi
 
-            #grab gateway data
+            #grab gateway diagnostic data
             if [[ $DIAG_GATEWAY -eq 1 && $IS_GATEWAY -eq 1 && "$ready" == "1/1" && "$status" == "Running" ]]; then
+                GATEWAY_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/gateway/${node}"
+                mkdir -p $GATEWAY_DIAGNOSTIC_DATA
+
                 #grab gwd-log.log
-                kubectl cp -n $NAMESPACE "${pod}:/drouter/temporary/log/apiconnect/gwd-log.log" "${LOG_TARGET_PATH}/gwd-log.log" &>/dev/null
+                kubectl cp -n $NAMESPACE "${pod}:/drouter/temporary/log/apiconnect/gwd-log.log" "${GATEWAY_DIAGNOSTIC_DATA}/gwd-log.log" &>/dev/null
 
                 #open SOMA port to localhost
                 kubectl port-forward ${pod} 5550:5550 -n ${NAMESPACE} 1>/dev/null 2>/dev/null &
@@ -727,20 +736,20 @@ for NAMESPACE in $NAMESPACE_LIST; do
                     sleep $ERROR_REPORT_SLEEP_TIMEOUT
 
                     #this will give a link that points to the target error report
-                    kubectl cp -n $NAMESPACE "${pod}:/drouter/temporary/error-report.txt.gz" "${LOG_TARGET_PATH}/error-report.txt.gz" &>/dev/null
+                    kubectl cp -n $NAMESPACE "${pod}:/drouter/temporary/error-report.txt.gz" "${GATEWAY_DIAGNOSTIC_DATA}/error-report.txt.gz" &>/dev/null
 
                     #extract path
-                    REPORT_PATH=`ls -l ${LOG_TARGET_PATH} | grep error-report.txt.gz | awk -F' ' '{print $NF}'`
+                    REPORT_PATH=`ls -l ${GATEWAY_DIAGNOSTIC_DATA} | grep error-report.txt.gz | awk -F' ' '{print $NF}'`
                     if [[ ! -v "$REPORT_PATH" ]]; then
                         #extract filename from path
                         REPORT_NAME=$(basename $REPORT_PATH)
 
                         #grab error report
-                        kubectl cp -n $NAMESPACE "${pod}:${REPORT_PATH}" "${LOG_TARGET_PATH}/${REPORT_NAME}" &>/dev/null
+                        kubectl cp -n $NAMESPACE "${pod}:${REPORT_PATH}" "${GATEWAY_DIAGNOSTIC_DATA}/${REPORT_NAME}" &>/dev/null
                     fi
 
                     #remove link
-                    rm -f "${LOG_TARGET_PATH}/error-report.txt.gz"
+                    rm -f "${GATEWAY_DIAGNOSTIC_DATA}/error-report.txt.gz"
                 fi
 
                 #clean up
@@ -883,9 +892,9 @@ for NAMESPACE in $NAMESPACE_LIST; do
             grep . $LOG_FILES | sed 's/:\[/[ /' | sort -k5,6 >$INTERLACED_LOG_FILE
 
             cd $TRANSFORM_DIRECTORY
-            OUTPUT=`sed 's/\[\([ a-z0-9_\-]*\) std\(out\|err\)\].*/\1/' $INTERLACED_LOG_FILE | sed 's/^ *//' | sort -u`
+            OUTPUT=`sed 's/\[\([ a-z0-9_\-]*\) std\(out\|err\)\].*/\1/' $INTERLACED_LOG_FILE | sed 's/^ *//' | awk -F ' ' '{print $NF}' | sort -u`
             while read tag; do
-                grep "^\[ *$tag " $INTERLACED_LOG_FILE >"${TRANSFORM_DIRECTORY}/${tag}.out"
+                grep "\[ *$tag " $INTERLACED_LOG_FILE >"${TRANSFORM_DIRECTORY}/${tag}.out"
             done <<< "$OUTPUT"
         done
     fi
