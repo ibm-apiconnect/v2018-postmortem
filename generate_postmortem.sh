@@ -580,7 +580,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
         done <<< "$OUTPUT"
 
         #nodetool status
-        OUTPUT=`kubectl get pods -n $NAMESPACE 2>/dev/null | grep "\-cc\-" | grep -v "stats" | grep -v "repair"`
+        OUTPUT=`kubectl get pods -n $NAMESPACE -o=name 2>/dev/null | grep "apiconnect-cc-[0-9]$"`
         while read line; do
             pod=`echo "${OUTPUT}" | awk -F' ' '{print $1}'`
             kubectl exec -n $NAMESPACE $pod -- nodetool status &>"${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
