@@ -580,7 +580,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
         done <<< "$OUTPUT"
 
         #nodetool status
-        OUTPUT=`kubectl get pods -n $NAMESPACE -o=name 2>/dev/null | grep "\-cc\-(\w){1,5}$"`
+        OUTPUT=`kubectl get pods -n $NAMESPACE 2>/dev/null | awk -F' ' '{print $1}' | egrep "\-cc\-(\w){1,5}$"`
         while read pod; do
             kubectl exec -n $NAMESPACE $pod -- nodetool status &>"${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
             [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
