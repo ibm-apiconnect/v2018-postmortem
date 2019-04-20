@@ -384,7 +384,13 @@ K8S_CLUSTER_NODE_DATA="${K8S_CLUSTER}/nodes"
 K8S_CLUSTER_LIST_DATA="${K8S_CLUSTER}/lists"
 K8S_CLUSTER_ROLE_DATA="${K8S_CLUSTER}/clusterroles"
 K8S_CLUSTER_ROLEBINDING_DATA="${K8S_CLUSTER}/clusterrolebindings"
-K8S_CLUSTER_STORAGE_DATA="${K8S_CLUSTER}/storage"
+
+K8S_CLUSTER_PV_DATA="${K8S_CLUSTER}/pv"
+K8S_CLUSTER_PV_DESCRIBE_DATA="${K8S_CLUSTER_PV_DATA}/describe"
+
+K8S_CLUSTER_STORAGECLASS_DATA="${K8S_CLUSTER}/storageclasses"
+K8S_CLUSTER_STORAGECLASS_DESCRIBE_DATA="${K8S_CLUSTER_STORAGECLASS_DATA}/describe"
+
 
 mkdir -p $K8S_VERSION
 
@@ -392,7 +398,9 @@ mkdir -p $K8S_CLUSTER_NODE_DATA
 mkdir -p $K8S_CLUSTER_LIST_DATA
 mkdir -p $K8S_CLUSTER_ROLE_DATA
 mkdir -p $K8S_CLUSTER_ROLEBINDING_DATA
-mkdir -p $K8S_CLUSTER_STORAGE_DATA
+
+mkdir -p $K8S_CLUSTER_PV_DESCRIBE_DATA
+mkdir -p $K8S_CLUSTER_STORAGECLASS_DESCRIBE_DATA
 
 #------------------------------------------------------------------------------------------------------
 
@@ -463,27 +471,6 @@ if [[ -z "$ARCHIVE_FILE" ]]; then
     ARCHIVE_FILE="${LOG_PATH}/apiconnect-logs-${TIMESTAMP}"
 fi
 
-#crds
-OUTPUT=`kubectl get crds 2>/dev/null`
-if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
-    echo "$OUTPUT" > "${K8S_CLUSTER_LIST_DATA}/crds.out"
-else
-    rm -fr $K8S_CLUSTER_LIST_DATA
-fi
-
-#storage
-OUTPUT=`kubectl get pv 2>/dev/null`
-if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
-    echo "$OUTPUT" > "${K8S_CLUSTER_STORAGE_DATA}/pv.out"
-fi
-OUTPUT=`kubectl get storageclasses 2>/dev/null`
-if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
-    echo "$OUTPUT" > "${K8S_CLUSTER_STORAGE_DATA}/storageclasses.out"
-fi
-if [[ ! -f "${K8S_CLUSTER_STORAGE_DATA}/pv.out" && ! -f "${K8S_CLUSTER_STORAGE_DATA}/storageclasses.out" ]]; then
-    rm -fr $K8S_CLUSTER_STORAGE_DATA
-fi
-
 #cluster roles
 OUTPUT=`kubectl get clusterroles 2>/dev/null | cut -d' ' -f1`
 if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
@@ -505,6 +492,37 @@ if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
 else
     rm -fr $K8S_CLUSTER_ROLEBINDING_DATA
 fi
+
+#crds
+OUTPUT=`kubectl get crds 2>/dev/null`
+if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+    echo "$OUTPUT" > "${K8S_CLUSTER_LIST_DATA}/crds.out"
+else
+    rm -fr $K8S_CLUSTER_LIST_DATA
+fi
+
+#pv
+OUTPUT=`kubectl get pv 2>/dev/null`
+if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+    echo "$OUTPUT" > "${K8S_CLUSTER_PV_DATA}/pv.out"
+    while read line; do
+        pv=`echo "$line" | cut -d' ' -f1`
+        kubectl describe pv $pv &>"${K8S_CLUSTER_PV_DESCRIBE_DATA}/${pv}.out"
+        [ $? -eq 0 ] || rm -f "${K8S_CLUSTER_PV_DESCRIBE_DATA}/${pv}.out"
+    done <<< "$OUTPUT"
+fi
+
+#storageclasses
+OUTPUT=`kubectl get storageclasses 2>/dev/null`
+if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+    echo "$OUTPUT" > "${K8S_CLUSTER_STORAGECLASS_DATA}/storageclasses.out"
+    while read $line; do
+        sc=`echo "$line" | cut -d' ' -f1`
+        kubectl describe storageclasses $sc &>"${K8S_CLUSTER_STORAGECLASS_DESCRIBE_DATA}/${sc}.out"
+        [ $? -eq 0 ] || rm -f "${K8S_CLUSTER_STORAGECLASS_DESCRIBE_DATA}/${sc}.out"
+    done <<< "$OUTPUT"
+fi
+
 #------------------------------------------------------------------------------------------------------
 
 #---------------------------------- collect namespace specific data -----------------------------------
@@ -513,12 +531,15 @@ for NAMESPACE in $NAMESPACE_LIST; do
     K8S_NAMESPACES_SPECIFIC="${K8S_NAMESPACES}/${NAMESPACE}"
 
     K8S_NAMESPACES_LIST_DATA="${K8S_NAMESPACES_SPECIFIC}/lists"
-    K8S_NAMESPACES_STORAGE_DATA="${K8S_NAMESPACES_SPECIFIC}/storage"
     K8S_NAMESPACES_CASSANDRA_DATA="${K8S_NAMESPACES_SPECIFIC}/cassandra"
 
     K8S_NAMESPACES_CONFIGMAP_DATA="${K8S_NAMESPACES_SPECIFIC}/configmaps"
     K8S_NAMESPACES_CONFIGMAP_YAML_OUTPUT="${K8S_NAMESPACES_CONFIGMAP_DATA}/yaml"
     K8S_NAMESPACES_CONFIGMAP_DESCRIBE_DATA="${K8S_NAMESPACES_CONFIGMAP_DATA}/describe"
+
+    K8S_NAMESPACES_ENDPOINT_DATA="${K8S_NAMESPACES_SPECIFIC}/endpoints"
+    K8S_NAMESPACES_ENDPOINT_DESCRIBE_DATA="${K8S_NAMESPACES_ENDPOINT_DATA}/describe"
+    K8S_NAMESPACES_ENDPOINT_YAML_OUTPUT="${K8S_NAMESPACES_ENDPOINT_DATA}/yaml"
 
     K8S_NAMESPACES_JOB_DATA="${K8S_NAMESPACES_SPECIFIC}/jobs"
     K8S_NAMESPACES_JOB_DESCRIBE_DATA="${K8S_NAMESPACES_JOB_DATA}/describe"
@@ -527,6 +548,9 @@ for NAMESPACE in $NAMESPACE_LIST; do
     K8S_NAMESPACES_POD_DESCRIBE_DATA="${K8S_NAMESPACES_POD_DATA}/describe"
     K8S_NAMESPACES_POD_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DATA}/diagnostic"
     K8S_NAMESPACES_POD_LOG_DATA="${K8S_NAMESPACES_POD_DATA}/logs"
+
+    K8S_NAMESPACES_PVC_DATA="${K8S_NAMESPACES_SPECIFIC}/pvc"
+    K8S_NAMESPACES_PVC_DESCRIBE_DATA="${K8S_NAMESPACES_PVC_DATA}/describe"
 
     K8S_NAMESPACES_ROLE_DATA="${K8S_NAMESPACES_SPECIFIC}/roles"
     K8S_NAMESPACES_ROLE_DESCRIBE_DATA="${K8S_NAMESPACES_ROLE_DATA}/describe"
@@ -537,17 +561,25 @@ for NAMESPACE in $NAMESPACE_LIST; do
     K8S_NAMESPACES_SA_DATA="${K8S_NAMESPACES_SPECIFIC}/service_accounts"
     K8S_NAMESPACES_SA_DESCRIBE_DATA="${K8S_NAMESPACES_SA_DATA}/describe"
 
+    K8S_NAMESPACES_SERVICE_DATA="${K8S_NAMESPACES_SPECIFIC}/services"
+    K8S_NAMESPACES_SERVICE_DESCRIBE_DATA="${K8S_NAMESPACES_SERVICE_DATA}/describe"
+    K8S_NAMESPACES_SERVICE_YAML_OUTPUT="${K8S_NAMESPACES_SERVICE_DATA}/yaml"
+
     mkdir -p $K8S_NAMESPACES_LIST_DATA
-    mkdir -p $K8S_NAMESPACES_STORAGE_DATA
     mkdir -p $K8S_NAMESPACES_CASSANDRA_DATA
 
     mkdir -p $K8S_NAMESPACES_CONFIGMAP_YAML_OUTPUT
     mkdir -p $K8S_NAMESPACES_CONFIGMAP_DESCRIBE_DATA
 
+    mkdir -p $K8S_NAMESPACES_ENDPOINT_DESCRIBE_DATA
+    mkdir -p $K8S_NAMESPACES_ENDPOINT_YAML_OUTPUT
+
     mkdir -p $K8S_NAMESPACES_JOB_DESCRIBE_DATA
 
     mkdir -p $K8S_NAMESPACES_POD_DESCRIBE_DATA
     mkdir -p $K8S_NAMESPACES_POD_LOG_DATA
+
+    mkdir -p $K8S_NAMESPACES_PVC_DESCRIBE_DATA
 
     mkdir -p $K8S_NAMESPACES_ROLE_DESCRIBE_DATA
 
@@ -555,18 +587,16 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
     mkdir -p $K8S_NAMESPACES_SA_DESCRIBE_DATA
 
+    mkdir -p $K8S_NAMESPACES_SERVICE_DESCRIBE_DATA
+    mkdir -p $K8S_NAMESPACES_SERVICE_YAML_OUTPUT
+
     #grab lists
-    OUTPUT=`kubectl get endpoints -n $NAMESPACE 2>/dev/null`
-    [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/endpoints.out"
     OUTPUT=`kubectl get events -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/events.out"
     OUTPUT=`kubectl get ingress -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/ingress.out"
     OUTPUT=`kubectl get secrets -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/secrets.out"
-    OUTPUT=`kubectl get svc -n $NAMESPACE 2>/dev/null`
-    [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/services.out"
-
 
     #grab cassandra data
     OUTPUT=`kubectl get cassandraclusters -n $NAMESPACE 2>/dev/null`
@@ -589,27 +619,6 @@ for NAMESPACE in $NAMESPACE_LIST; do
         rm -fr $K8S_NAMESPACES_CASSANDRA_DATA
     fi
 
-    #grab storage data
-    OUTPUT=`kubectl get pvc -n $NAMESPACE 2>/dev/null`
-    if [[ $? -eq 0 && ${#OUTPUT} -gt 0  ]]; then
-        echo "$OUTPUT" > "${K8S_NAMESPACES_STORAGE_DATA}/pvc.out"
-    else
-        rm -fr $K8S_NAMESPACES_STORAGE_DATA
-    fi
-
-    #grab job data
-    OUTPUT=`kubectl get jobs -n $NAMESPACE 2>/dev/null`
-    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
-        echo "$OUTPUT" > "${K8S_NAMESPACES_JOB_DATA}/jobs.out"
-        while read line; do
-            job=`echo "$line" | cut -d' ' -f1`
-            kubectl describe job $job -n $NAMESPACE &> "${K8S_NAMESPACES_JOB_DESCRIBE_DATA}/${job}.out"
-            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_JOB_DESCRIBE_DATA}/${job}.out"
-        done <<< "$OUTPUT"
-    else
-        rm -fr $K8S_NAMESPACES_JOB_DATA
-    fi
-
     #grab configmap data
     OUTPUT=`kubectl get configmaps -n $NAMESPACE 2>/dev/null`
     if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
@@ -624,6 +633,35 @@ for NAMESPACE in $NAMESPACE_LIST; do
         done <<< "$OUTPUT"
     else
         rm -fr $K8S_NAMESPACES_CONFIGMAP_DATA
+    fi
+
+    #grab endpoint data
+    OUTPUT=`kubectl get endpoints -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_ENDPOINT_DATA}/endpoints.out"
+        while read line; do
+            endpoint=`echo "$line" | cut -d' ' -f1`
+            kubectl describe endpoints $endpoint -n $NAMESPACE &>"${K8S_NAMESPACES_ENDPOINT_DESCRIBE_DATA}/${endpoint}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_ENDPOINT_DESCRIBE_DATA}/${endpoint}.out"
+
+            kubectl get endpoints $endpoint -o yaml -n $NAMESPACE &>"${K8S_NAMESPACES_ENDPOINT_YAML_OUTPUT}/${endpoint}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_ENDPOINT_YAML_OUTPUT}/${endpoint}.out"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_ENDPOINT_DATA
+    fi
+
+    #grab job data
+    OUTPUT=`kubectl get jobs -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_JOB_DATA}/jobs.out"
+        while read line; do
+            job=`echo "$line" | cut -d' ' -f1`
+            kubectl describe job $job -n $NAMESPACE &> "${K8S_NAMESPACES_JOB_DESCRIBE_DATA}/${job}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_JOB_DESCRIBE_DATA}/${job}.out"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_JOB_DATA
     fi
 
     #grab pod data
@@ -834,6 +872,19 @@ for NAMESPACE in $NAMESPACE_LIST; do
         rm -fr $K8S_NAMESPACES_POD_DATA
     fi
 
+    #grab pvc data
+    OUTPUT=`kubectl get pvc -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0  ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_PVC_DATA}/pvc.out"
+        while read line; do
+            pvc=`echo "$line" | cut -d' ' -f1`
+            kubectl describe pvc $pvc -n $NAMESPACE &>"${K8S_NAMESPACES_PVC_DESCRIBE_DATA}/${pvc}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_PVC_DESCRIBE_DATA}/${pvc}.out"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_PVC_DATA
+    fi
+
     #grab role data
     OUTPUT=`kubectl get roles -n $NAMESPACE 2>/dev/null`
     if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
@@ -872,6 +923,25 @@ for NAMESPACE in $NAMESPACE_LIST; do
     else
         rm -fr $K8S_NAMESPACES_SA_DATA
     fi
+
+    #grab service data
+    OUTPUT=`kubectl get svc -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_SERVICE_DATA}/services.out"
+        while read line; do
+            svc=`echo "$line" | cut -d' ' -f1`
+            
+            kubectl describe svc $svc -n $NAMESPACE &>"${K8S_NAMESPACES_SERVICE_DESCRIBE_DATA}/${svc}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_SERVICE_DESCRIBE_DATA}/${svc}.out"
+
+            kubectl get svc $svc -o yaml -n $NAMESPACE &>"${K8S_NAMESPACES_SERVICE_YAML_OUTPUT}/${svc}.yaml"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_SERVICE_YAML_OUTPUT}/${svc}.yaml"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_SERVICE_DATA
+    fi
+
+    [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/services.out"
 
     #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ post processing ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     #transform portal data
