@@ -44,11 +44,6 @@ for switch in $@; do
         *"--ova"*)
             NO_APICUP=1
             CAPTURE_OS_LOGS=1
-
-            #turn on history collection for script
-            HISTFILE=~/.bash_history
-            HISTTIMEFORMAT="%Y-%m-%d %T - "
-            set -o history
             ;;
         *"--diagnostic-all"*)
             DIAG_GATEWAY=1
@@ -281,7 +276,8 @@ if [[ ! -z "$CAPTURE_OS_LOGS" ]]; then
     mkdir -p $OVA_DATA
 
     #grab bash history
-    history &>"${OVA_DATA}/bash_history.out"
+    cp "/home/apicadm/.bash_history" "${OVA_DATA}/apicadm-bash_history.out"
+    cp "/root/.bash_history" "${OVA_DATA}/root-bash_history.out"
 
     #grab syslog files
     cp -f /var/log/syslog* $OVA_DATA
@@ -357,8 +353,12 @@ while read line; do
             fi
         fi
 
-        helm get values --all $release 1>"${HELM_DEPLOYMENT_DATA}/${release}_${chart}.out" 2>/dev/null
-        [ $? -eq 0 ] || rm -f "${HELM_DEPLOYMENT_DATA}/${release}_${chart}.out"
+        helm get values --all $release 1>"${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out" 2>/dev/null
+        [ $? -eq 0 ] || rm -f "${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out"
+
+        #grab history
+        helm history $release --col-width 5000 &> "${HELM_DATA}/${release}_${chart}-history.out"
+        [ $? -eq 0 ] || rm -f "${HELM_DATA}/${release}_${chart}-history.out"
     fi
 done <<< "$OUTPUT"
 
@@ -537,13 +537,20 @@ for NAMESPACE in $NAMESPACE_LIST; do
     K8S_NAMESPACES_CONFIGMAP_YAML_OUTPUT="${K8S_NAMESPACES_CONFIGMAP_DATA}/yaml"
     K8S_NAMESPACES_CONFIGMAP_DESCRIBE_DATA="${K8S_NAMESPACES_CONFIGMAP_DATA}/describe"
 
+    K8S_NAMESPACES_CRONJOB_DATA="${K8S_NAMESPACES_SPECIFIC}/cronjobs"
+    K8S_NAMESPACES_CRONJOB_DESCRIBE_DATA="${K8S_NAMESPACES_CRONJOB_DATA}/describe"
+
+    K8S_NAMESPACES_DAEMONSET_DATA="${K8S_NAMESPACES_SPECIFIC}/daemonsets"
+    K8S_NAMESPACES_DAEMONSET_YAML_OUTPUT="${K8S_NAMESPACES_DAEMONSET_DATA}/yaml"
+    K8S_NAMESPACES_DAEMONSET_DESCRIBE_DATA="${K8S_NAMESPACES_DAEMONSET_DATA}/describe"
+
     K8S_NAMESPACES_ENDPOINT_DATA="${K8S_NAMESPACES_SPECIFIC}/endpoints"
     K8S_NAMESPACES_ENDPOINT_DESCRIBE_DATA="${K8S_NAMESPACES_ENDPOINT_DATA}/describe"
     K8S_NAMESPACES_ENDPOINT_YAML_OUTPUT="${K8S_NAMESPACES_ENDPOINT_DATA}/yaml"
 
     K8S_NAMESPACES_JOB_DATA="${K8S_NAMESPACES_SPECIFIC}/jobs"
     K8S_NAMESPACES_JOB_DESCRIBE_DATA="${K8S_NAMESPACES_JOB_DATA}/describe"
-
+    
     K8S_NAMESPACES_POD_DATA="${K8S_NAMESPACES_SPECIFIC}/pods"
     K8S_NAMESPACES_POD_DESCRIBE_DATA="${K8S_NAMESPACES_POD_DATA}/describe"
     K8S_NAMESPACES_POD_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DATA}/diagnostic"
@@ -565,11 +572,19 @@ for NAMESPACE in $NAMESPACE_LIST; do
     K8S_NAMESPACES_SERVICE_DESCRIBE_DATA="${K8S_NAMESPACES_SERVICE_DATA}/describe"
     K8S_NAMESPACES_SERVICE_YAML_OUTPUT="${K8S_NAMESPACES_SERVICE_DATA}/yaml"
 
+    K8S_NAMESPACES_STS_DATA="${K8S_NAMESPACES_SPECIFIC}/statefulset"
+    K8S_NAMESPACES_STS_DESCRIBE_DATA="${K8S_NAMESPACES_STS_DATA}/describe"
+
     mkdir -p $K8S_NAMESPACES_LIST_DATA
     mkdir -p $K8S_NAMESPACES_CASSANDRA_DATA
 
     mkdir -p $K8S_NAMESPACES_CONFIGMAP_YAML_OUTPUT
     mkdir -p $K8S_NAMESPACES_CONFIGMAP_DESCRIBE_DATA
+
+    mkdir -p $K8S_NAMESPACES_CRONJOB_DESCRIBE_DATA
+
+    mkdir -p $K8S_NAMESPACES_DAEMONSET_YAML_OUTPUT
+    mkdir -p $K8S_NAMESPACES_DAEMONSET_DESCRIBE_DATA
 
     mkdir -p $K8S_NAMESPACES_ENDPOINT_DESCRIBE_DATA
     mkdir -p $K8S_NAMESPACES_ENDPOINT_YAML_OUTPUT
@@ -590,6 +605,8 @@ for NAMESPACE in $NAMESPACE_LIST; do
     mkdir -p $K8S_NAMESPACES_SERVICE_DESCRIBE_DATA
     mkdir -p $K8S_NAMESPACES_SERVICE_YAML_OUTPUT
 
+    mkdir -p $K8S_NAMESPACES_STS_DESCRIBE_DATA
+
     #grab lists
     OUTPUT=`kubectl get events -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/events.out"
@@ -609,11 +626,14 @@ for NAMESPACE in $NAMESPACE_LIST; do
             [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CASSANDRA_DATA}/${cc}.out"
         done <<< "$OUTPUT"
 
-        #nodetool status
+        #nodetool status and debug logs
         OUTPUT=`kubectl get pods -n $NAMESPACE 2>/dev/null | awk -F' ' '{print $1}' | egrep "\-cc\-(\w){1,5}$"`
         while read pod; do
             kubectl exec -n $NAMESPACE $pod -- nodetool status &>"${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
             [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
+
+            kubectl cp -n $NAMESPACE "${pod}:/var/db/logs/" "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-debug.log" &>/dev/null
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-debug.log"
         done <<< "$OUTPUT"
     else
         rm -fr $K8S_NAMESPACES_CASSANDRA_DATA
@@ -633,6 +653,35 @@ for NAMESPACE in $NAMESPACE_LIST; do
         done <<< "$OUTPUT"
     else
         rm -fr $K8S_NAMESPACES_CONFIGMAP_DATA
+    fi
+
+    #grab cronjob data
+    OUTPUT=`kubectl get cronjobs -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_CRONJOB_DATA}/cronjobs.out"
+        while read line; do
+            cronjob=`echo "$line" | cut -d' ' -f1`
+            kubectl describe cronjob $cronjob -n $NAMESPACE &> "${K8S_NAMESPACES_CRONJOB_DESCRIBE_DATA}/${cronjob}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CRONJOB_DESCRIBE_DATA}/${cronjob}.out"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_CRONJOB_DATA
+    fi
+
+    #grab daemonset data
+    OUTPUT=`kubectl get daemonset -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_DAEMONSET_DATA}/endpoints.out"
+        while read line; do
+            ds=`echo "$line" | cut -d' ' -f1`
+            kubectl describe daemonset $ds -n $NAMESPACE &>"${K8S_NAMESPACES_DAEMONSET_DESCRIBE_DATA}/${ds}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_DAEMONSET_DESCRIBE_DATA}/${ds}.out"
+
+            kubectl get daemonset $ds -o yaml -n $NAMESPACE &>"${K8S_NAMESPACES_DAEMONSET_YAML_OUTPUT}/${ds}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_DAEMONSET_YAML_OUTPUT}/${ds}.out"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_DAEMONSET_DATA
     fi
 
     #grab endpoint data
@@ -941,7 +990,18 @@ for NAMESPACE in $NAMESPACE_LIST; do
         rm -fr $K8S_NAMESPACES_SERVICE_DATA
     fi
 
-    [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/services.out"
+    #grab statefulset data
+    OUTPUT=`kubectl get sts -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_STS_DATA}/statefulset.out"
+        while read line; do
+            sts=`echo "$line" | cut -d' ' -f1`
+            kubectl describe sts $sts -n $NAMESPACE &> "${K8S_NAMESPACES_STS_DESCRIBE_DATA}/${sts}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_STS_DESCRIBE_DATA}/${sts}.out"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_STS_DATA
+    fi
 
     #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ post processing ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     #transform portal data
