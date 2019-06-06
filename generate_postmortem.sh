@@ -632,8 +632,8 @@ for NAMESPACE in $NAMESPACE_LIST; do
             kubectl exec -n $NAMESPACE $pod -- nodetool status &>"${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
             [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
 
-            kubectl cp -n $NAMESPACE "${pod}:/var/db/logs/" "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-debug.log" &>/dev/null
-            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-debug.log"
+            kubectl cp -n $NAMESPACE "${pod}:/var/db/logs/" "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-debug" &>/dev/null
+            [ $? -eq 0 ] || rm -fr "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-debug"
         done <<< "$OUTPUT"
     else
         rm -fr $K8S_NAMESPACES_CASSANDRA_DATA
