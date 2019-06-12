@@ -229,7 +229,8 @@ if [[ -z "$NO_APICUP" ]]; then
     #loop through subsystems
     OUTPUT1=`apicup subsys list 2>/dev/null | cut -d' ' -f1`
     while read line1; do
-        if [[ "${line1,,}" != *"name"* ]]; then
+        lc_line1=`echo "${line1}" | tr "[A-Z]" "[a-z]"`
+        if [[ "${lc_line1}" != *"name"* ]]; then
             #grab certs lists for subsystem
             apicup certs list $line1 1>"${APICUP_CERTS_DATA}/certs-$line1.out" 2>/dev/null
 
@@ -250,7 +251,7 @@ if [[ -z "$NO_APICUP" ]]; then
                     endpoint=`echo "$line2" | awk -F' ' '{print $2}'`
 
                     echo -e "$ nslookup $endpoint\n" >"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
-                    kubectl exec busybox -- nslookup $endpoint &>>"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
+                    kubectl exec busybox -- nslookup $endpoint >>"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out" 2>>&1
                 fi
             done <<< "$OUTPUT2"
         fi
@@ -343,7 +344,9 @@ while read line; do
         if [[ ! -z "$namespace" ]]; then
             ns_found=0
             for ns in $NAMESPACE_LIST; do
-                if [[ "${namespace,,}" == "${ns,,}" ]]; then
+                lc_ns=`echo "${ns}" | tr "[A-Z]" "[a-z]"`
+                lc_namespace=`echo "${namespace}" | tr "[A-Z]" "[a-z]"`
+                if [[ "${lc_namespace}" == "${lc_ns}" ]]; then
                     ns_found=1
                     break
                 fi
@@ -826,7 +829,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
                     #extract path
                     REPORT_PATH=`ls -l ${GATEWAY_DIAGNOSTIC_DATA} | grep error-report.txt.gz | awk -F' ' '{print $NF}'`
-                    if [[ ! -v "$REPORT_PATH" ]]; then
+                    if [[ -n "$REPORT_PATH" ]]; then
                         #extract filename from path
                         REPORT_NAME=$(basename $REPORT_PATH)
 
