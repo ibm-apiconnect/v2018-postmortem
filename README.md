@@ -1,11 +1,5 @@
 # v2018-postmortem-tool
 
-## Prerequisites
-Place script in _apicup project_ directory or set the environment variable **APICUP_PROJECT_PATH** using the following command:
-```
-export APICUP_PROJECT_PATH="/path/to/directory"
-```
-
 
 ## Instructions
 ### OVA deployment:
@@ -22,6 +16,12 @@ curl -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconnect/
 4.  Run the tool using the command `./generate_postmortem.sh --ova`.
 
 ### Kubernetes deployment:
+#### Prerequisites
+Place script in _apicup project_ directory or set the environment variable **APICUP_PROJECT_PATH** using the following command:
+```
+export APICUP_PROJECT_PATH="/path/to/directory"
+```
+
 1.  Make sure the **kubectl** command is installed.
 2.  Make sure the **kubectl** is configured to the Kubernetes cluster.  See following commands to complete this task.
 ```
