@@ -5,7 +5,7 @@
 ### OVA deployment:
 1. Connect to the target appliance via SSH then switch to the _root user_ using the following commands:
 ```shell
-ssh apicadm@{ova appliance hostname}
+ssh {ova appliance hostname} -l apicadm
 sudo -i
 ```
 2.  Download the script using the following command:
