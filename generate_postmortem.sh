@@ -276,6 +276,9 @@ if [[ ! -z "$CAPTURE_OS_LOGS" ]]; then
     OVA_DATA="${TEMP_PATH}/ova"
     mkdir -p $OVA_DATA
 
+    #grab version
+    apic version > "${OVA_DATA}/version.out"
+
     #grab bash history
     cp "/home/apicadm/.bash_history" "${OVA_DATA}/apicadm-bash_history.out"
     cp "/root/.bash_history" "${OVA_DATA}/root-bash_history.out"
