@@ -67,4 +67,4 @@ Enable the following if troubleshooting an issue for the following subsystems:
 ```shell
 ./generate_postmortem.sh --debug &>debug.log
 ```
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;then open an issue on the github page attaching the `debug.log` file.
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;then open an issue on the github page attaching the `debug.log` file.
