@@ -46,8 +46,12 @@ for switch in $@; do
             CAPTURE_OS_LOGS=1
             ;;
         *"--diagnostic-all"*)
+            DIAG_MANAGER=1
             DIAG_GATEWAY=1
             DIAG_PORTAL=1
+            ;;
+        *"--diagnostic-manager"*)
+            DIAG_MANAGER=1
             ;;
         *"--diagnostic-gateway"*)
             DIAG_GATEWAY=1
@@ -206,9 +210,11 @@ if [[ -z "$NO_APICUP" ]]; then
     APICUP_DATA="${TEMP_PATH}/apicup"
     APICUP_CERTS_DATA="${APICUP_DATA}/certs"
     APICUP_ENDPOINT_DATA="${APICUP_DATA}/endpoints"
+    APICUP_HEALTHCHECK_DATA="${APICUP_DATA}/health_check"
 
     mkdir -p $APICUP_CERTS_DATA
     mkdir -p $APICUP_ENDPOINT_DATA
+    mkdir -p $APICUP_HEALTHCHECK_DATA
     #------------------------------------------------------------------------------------------------------
     cd $APICUP_PROJECT_PATH
 
@@ -233,6 +239,9 @@ if [[ -z "$NO_APICUP" ]]; then
         if [[ "${lc_line1}" != *"name"* ]]; then
             #grab certs lists for subsystem
             apicup certs list $line1 1>"${APICUP_CERTS_DATA}/certs-$line1.out" 2>/dev/null
+
+            #grab health-check data
+            apicup subsys health-check --verbose $line1 &>"${APICUP_HEALTHCHECK_DATA}/${line1}.out"
 
             #check each endpoint using nslookup
             OUTPUT2=`apicup subsys get $line1 2>/dev/null`
@@ -613,6 +622,10 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
     mkdir -p $K8S_NAMESPACES_STS_DESCRIBE_DATA
 
+    if [[ $DIAG_MANAGER -eq 1 ]]; then
+        mkdir -p "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager" 
+    fi
+
     #grab lists
     OUTPUT=`kubectl get events -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/events.out"
@@ -638,9 +651,32 @@ for NAMESPACE in $NAMESPACE_LIST; do
             kubectl exec -n $NAMESPACE $pod -- nodetool status &>"${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
             [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
 
-            kubectl cp -n $NAMESPACE "${pod}:/var/db/logs/" "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-debug" &>/dev/null
-            [ $? -eq 0 ] || rm -fr "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-debug"
+            if [[ $DIAG_MANAGER -eq 1 ]]; then
+                kubectl cp -n $NAMESPACE "${pod}:/var/db/logs/" "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager/${pod}-debug" &>/dev/null
+                [ $? -eq 0 ] || rm -fr "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager/${pod}-debug"
+            fi
         done <<< "$OUTPUT"
+
+        #check services state
+        if [[ $DIAG_MANAGER -eq 1 ]]; then
+            OUTPUT=`kubectl get pods -n $NAMESPACE 2>/dev/null | awk -F' ' '{print $1}' | grep "apim-v2"`
+            while read pod; do
+                file_path="${CURRENT_PATH}/identifyServicesState.js"
+                if [[ ! -f $file_path ]]; then
+                    DOWNLOAD_RESULT=`curl --write-out %{http_code} -s -o ${file_path} https://raw.githubusercontent.com/ibm-apiconnect/v2018-postmortem/master/identifyServicesState.js`
+                else
+                    DOWNLOAD_RESULT=200
+                fi 
+                if [[ $DOWNLOAD_RESULT -eq 200 ]]; then
+                    cat "${file_path}" | kubectl exec -n $NAMESPACE -it $pod -- node &>"${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager/${pod}-identifyServicesState.out"
+                    [ $? -eq 0 ] || rm -fr "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager/${pod}-identifyServicesState.out"
+                else
+                    warning1="WARNING!  Could not locate required file ["
+                    warning2="]."
+                    echo -e "${COLOR_YELLOW}${warning1}${COLOR_WHITE}${file_path}${COLOR_YELLOW}${warning2}${COLOR_RESET}"
+                fi
+            done <<< "$OUTPUT"
+        fi
     else
         rm -fr $K8S_NAMESPACES_CASSANDRA_DATA
     fi
