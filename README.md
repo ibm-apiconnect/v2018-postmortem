@@ -18,8 +18,8 @@ curl -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconnect/
 ### Kubernetes deployment:
 ------
 #### Prerequisites
-Place script and run from the _apicup project_ directory
--or-
+Place script and run from the _apicup project_ directory  
+-or-  
 set the environment variable **APICUP_PROJECT_PATH** using the following command:
 ```shell
 export APICUP_PROJECT_PATH="/path/to/directory"
@@ -47,12 +47,12 @@ curl -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconnect/
 
 
 ## Working a specific subystem issue?
-Enable the following if troubleshooting an issue for the following subsystems:
+Enable the following if troubleshooting an issue for the following subsystems:  
 Note: Enabling diagnostics may cause the script to take much longer to complete (especially over a VPN connection).
 ### All (if requested by support)
 `--diagnostic-all`
 ### Manager
-`--diagnostic-manager`
+`--diagnostic-manager`  
 Note:  If internet is not available on target workstation, download `identifyServicesState.js` and place in same directory as `generate_postmortem.sh`.
 ### Gateway
 `--diagnostic-gateway`
