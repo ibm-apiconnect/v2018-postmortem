@@ -48,7 +48,7 @@ curl -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconnect/
 
 ## Working a specific subystem issue?
 Enable the following if troubleshooting an issue for the following subsystems:  
-⋅⋅⋅Note: Enabling diagnostics may cause the script to take much longer to complete (especially over a VPN connection).
+***Note: Enabling diagnostics may cause the script to take much longer to complete (especially over a VPN connection).
 ### All (if requested by support)
 `--diagnostic-all`
 ### Manager
@@ -67,4 +67,4 @@ Enable the following if troubleshooting an issue for the following subsystems:
 ```shell
 ./generate_postmortem.sh --debug &>debug.log
 ```
-⋅⋅⋅then open an issue on the github page attaching the `debug.log` file.
+***then open an issue on the github page attaching the `debug.log` file.
