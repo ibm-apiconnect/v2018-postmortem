@@ -248,7 +248,8 @@ if [[ -z "$NO_APICUP" ]]; then
             START_READ=0
             i=0
             while read line2; do
-                if [[ "${line2,,}" == *"endpoints"* ]]; then
+                lc_line2=`echo "${line2}" | tr "[A-Z]" "[a-z]"`
+                if [[ "${lc_line2}" == *"endpoints"* ]]; then
                     i=4
                     START_READ=1
                 elif [[ $START_READ -eq 1 && $i -gt 0 ]]; then
@@ -1076,7 +1077,8 @@ done
 
 #write out data to zip file
 cd $TEMP_PATH
-if [[ "${ARCHIVE_UTILITY,,}" == *"zip"* ]]; then
+lc_ARCHIVE_UTILITY=`echo "${ARCHIVE_UTILITY}" | tr "[A-Z]" "[a-z]"`
+if [[ "${lc_ARCHIVE_UTILITY}" == *"zip"* ]]; then
     ARCHIVE_FILE="${ARCHIVE_FILE}.zip"
     zip -rq $ARCHIVE_FILE .
 else
