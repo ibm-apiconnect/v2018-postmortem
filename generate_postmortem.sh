@@ -1066,7 +1066,9 @@ for NAMESPACE in $NAMESPACE_LIST; do
             cd $TRANSFORM_DIRECTORY
             OUTPUT=`sed 's/\[\([ a-z0-9_\-]*\) std\(out\|err\)\].*/\1/' $INTERLACED_LOG_FILE | sed 's/^ *//' | awk -F ' ' '{print $NF}' | sort -u`
             while read tag; do
-                grep "\[ *$tag " $INTERLACED_LOG_FILE >"${TRANSFORM_DIRECTORY}/${tag}.out"
+                if [[ -f $INTERLACED_LOG_FILE ]]; then
+                    grep "\[ *$tag " $INTERLACED_LOG_FILE >"${TRANSFORM_DIRECTORY}/${tag}.out"
+                fi
             done <<< "$OUTPUT"
         done
     fi
