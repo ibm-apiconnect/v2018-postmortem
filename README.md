@@ -55,7 +55,6 @@ Enable the following if troubleshooting an issue for the following subsystems:
 
 
 ## Need help?
--  Reach out on Slack in the channel **#v2018-postmortem-tool**
 -  Open an issue to submit any feedback
 -  Problem with the script?  Run the following command:
 ```shell
