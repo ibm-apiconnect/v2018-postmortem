@@ -46,8 +46,12 @@ for switch in $@; do
             CAPTURE_OS_LOGS=1
             ;;
         *"--diagnostic-all"*)
+            DIAG_MANAGER=1
             DIAG_GATEWAY=1
             DIAG_PORTAL=1
+            ;;
+        *"--diagnostic-manager"*)
+            DIAG_MANAGER=1
             ;;
         *"--diagnostic-gateway"*)
             DIAG_GATEWAY=1
@@ -206,9 +210,11 @@ if [[ -z "$NO_APICUP" ]]; then
     APICUP_DATA="${TEMP_PATH}/apicup"
     APICUP_CERTS_DATA="${APICUP_DATA}/certs"
     APICUP_ENDPOINT_DATA="${APICUP_DATA}/endpoints"
+    APICUP_HEALTHCHECK_DATA="${APICUP_DATA}/health_check"
 
     mkdir -p $APICUP_CERTS_DATA
     mkdir -p $APICUP_ENDPOINT_DATA
+    mkdir -p $APICUP_HEALTHCHECK_DATA
     #------------------------------------------------------------------------------------------------------
     cd $APICUP_PROJECT_PATH
 
@@ -234,12 +240,16 @@ if [[ -z "$NO_APICUP" ]]; then
             #grab certs lists for subsystem
             apicup certs list $line1 1>"${APICUP_CERTS_DATA}/certs-$line1.out" 2>/dev/null
 
+            #grab health-check data
+            apicup subsys health-check --verbose $line1 &>"${APICUP_HEALTHCHECK_DATA}/${line1}.out"
+
             #check each endpoint using nslookup
             OUTPUT2=`apicup subsys get $line1 2>/dev/null`
             START_READ=0
             i=0
             while read line2; do
-                if [[ "${line2,,}" == *"endpoints"* ]]; then
+                lc_line2=`echo "${line2}" | tr "[A-Z]" "[a-z]"`
+                if [[ "${lc_line2}" == *"endpoints"* ]]; then
                     i=4
                     START_READ=1
                 elif [[ $START_READ -eq 1 && $i -gt 0 ]]; then
@@ -275,6 +285,9 @@ fi
 if [[ ! -z "$CAPTURE_OS_LOGS" ]]; then
     OVA_DATA="${TEMP_PATH}/ova"
     mkdir -p $OVA_DATA
+
+    #grab version
+    apic version > "${OVA_DATA}/version.out"
 
     #grab bash history
     cp "/home/apicadm/.bash_history" "${OVA_DATA}/apicadm-bash_history.out"
@@ -610,6 +623,10 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
     mkdir -p $K8S_NAMESPACES_STS_DESCRIBE_DATA
 
+    if [[ $DIAG_MANAGER -eq 1 ]]; then
+        mkdir -p "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager" 
+    fi
+
     #grab lists
     OUTPUT=`kubectl get events -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/events.out"
@@ -635,9 +652,32 @@ for NAMESPACE in $NAMESPACE_LIST; do
             kubectl exec -n $NAMESPACE $pod -- nodetool status &>"${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
             [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-nodetool_status.out"
 
-            kubectl cp -n $NAMESPACE "${pod}:/var/db/logs/" "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-debug" &>/dev/null
-            [ $? -eq 0 ] || rm -fr "${K8S_NAMESPACES_CASSANDRA_DATA}/${pod}-debug"
+            if [[ $DIAG_MANAGER -eq 1 ]]; then
+                kubectl cp -n $NAMESPACE "${pod}:/var/db/logs/" "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager/${pod}-debug" &>/dev/null
+                [ $? -eq 0 ] || rm -fr "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager/${pod}-debug"
+            fi
         done <<< "$OUTPUT"
+
+        #check services state
+        if [[ $DIAG_MANAGER -eq 1 ]]; then
+            OUTPUT=`kubectl get pods -n $NAMESPACE 2>/dev/null | awk -F' ' '{print $1}' | grep "apim-v2"`
+            while read pod; do
+                file_path="${CURRENT_PATH}/identifyServicesState.js"
+                if [[ ! -f $file_path ]]; then
+                    DOWNLOAD_RESULT=`curl --write-out %{http_code} -s -o ${file_path} https://raw.githubusercontent.com/ibm-apiconnect/v2018-postmortem/master/identifyServicesState.js`
+                else
+                    DOWNLOAD_RESULT=200
+                fi 
+                if [[ $DOWNLOAD_RESULT -eq 200 ]]; then
+                    cat "${file_path}" | kubectl exec -n $NAMESPACE -it $pod -- node &>"${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager/${pod}-identifyServicesState.out"
+                    [ $? -eq 0 ] || rm -fr "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager/${pod}-identifyServicesState.out"
+                else
+                    warning1="WARNING!  Could not locate required file ["
+                    warning2="]."
+                    echo -e "${COLOR_YELLOW}${warning1}${COLOR_WHITE}${file_path}${COLOR_YELLOW}${warning2}${COLOR_RESET}"
+                fi
+            done <<< "$OUTPUT"
+        fi
     else
         rm -fr $K8S_NAMESPACES_CASSANDRA_DATA
     fi
@@ -1024,7 +1064,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
             grep . $LOG_FILES | sed 's/:\[/[ /' | sort -k5,6 >$INTERLACED_LOG_FILE
 
             cd $TRANSFORM_DIRECTORY
-            OUTPUT=`sed 's/\[\([ a-z0-9_\-]*\) std\(out\|err\)\].*/\1/' $INTERLACED_LOG_FILE | sed 's/^ *//' | awk -F ' ' '{print $NF}' | sort -u`
+            OUTPUT=`sed -E "s/\[([ a-z0-9_\-]*) std(out|err)].*/\1/" $INTERLACED_LOG_FILE | sed 's/^ *//' | awk -F ' ' '{print $NF}' | sort -u`
             while read tag; do
                 grep "\[ *$tag " $INTERLACED_LOG_FILE >"${TRANSFORM_DIRECTORY}/${tag}.out"
             done <<< "$OUTPUT"
@@ -1037,7 +1077,8 @@ done
 
 #write out data to zip file
 cd $TEMP_PATH
-if [[ "${ARCHIVE_UTILITY,,}" == *"zip"* ]]; then
+lc_ARCHIVE_UTILITY=`echo "${ARCHIVE_UTILITY}" | tr "[A-Z]" "[a-z]"`
+if [[ "${lc_ARCHIVE_UTILITY}" == *"zip"* ]]; then
     ARCHIVE_FILE="${ARCHIVE_FILE}.zip"
     zip -rq $ARCHIVE_FILE .
 else
