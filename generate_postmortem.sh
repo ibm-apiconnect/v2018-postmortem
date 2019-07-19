@@ -261,7 +261,7 @@ if [[ -z "$NO_APICUP" ]]; then
                     endpoint=`echo "$line2" | awk -F' ' '{print $2}'`
 
                     echo -e "$ nslookup $endpoint\n" >"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
-                    kubectl exec busybox -- nslookup $endpoint >>"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
+                    kubectl exec -n default busybox -- nslookup $endpoint >>"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
                 fi
             done <<< "$OUTPUT2"
         fi
