@@ -222,7 +222,7 @@ if [[ -z "$NO_APICUP" ]]; then
     apicup version --semver > "${APICUP_DATA}/apicup.version"
 
     #deploy busybox
-    kubectl get pods 2>/dev/null | grep -q busybox
+    kubectl get pods -n default 2>/dev/null | grep -q busybox
     if [[ $? -eq 0 ]]; then
         REMOVE_BUSYBOX=0
     else
