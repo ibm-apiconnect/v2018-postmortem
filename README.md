@@ -48,14 +48,15 @@ curl -s -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconne
 
 ## Working a specific subystem issue?
 Enable the following if troubleshooting an issue for the following subsystems:  
-> Note: Enabling diagnostics may cause the script to take much longer to complete (especially over a VPN connection).
+> **Note**: Enabling diagnostics may cause the script to take much longer to complete (especially over a VPN connection).
 ### All (if requested by support)
 `--diagnostic-all`
 ### Manager
 `--diagnostic-manager`  
-> Note:  If internet is not available on target workstation, download `identifyServicesState.js` and place in same directory as `generate_postmortem.sh`.
+> **Note**:  If internet is not available on target workstation, download `identifyServicesState.js` and place in same directory as `generate_postmortem.sh`.
 ### Gateway
 `--diagnostic-gateway`
+> **Note**: In order for this switch to function, make sure connections to `127.0.0.1` not restricted on the local machine.
 ### Portal
 `--diagnostic-portal`
 

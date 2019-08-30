@@ -868,6 +868,10 @@ for NAMESPACE in $NAMESPACE_LIST; do
                         #clean up
                         rm -f "${GATEWAY_DIAGNOSTIC_DATA}/output.error"
                     fi
+                else
+                    warning="WARNING! "
+                    text="Received response code [${response}] while attempting to generate an error report on gateway.  Are calls to [127.0.0.1] being restricted?"
+                    echo -e "${COLOR_YELLOW}${warning}${COLOR_WHITE}$text${COLOR_RESET}"
                 fi
 
                 #clean up
