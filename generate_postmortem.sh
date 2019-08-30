@@ -109,12 +109,6 @@ if [[ -z "$NO_APICUP" && $? -ne 0 ]]; then
     echo "Unable to locate the command [apicup] in the path.  Either install or add it to the path.  EXITING..."
     exit 1
 fi
-
-which nslookup &> /dev/null
-if [[ $? -ne 0 ]]; then
-    echo "Unable to locate the command [nslookup] in the path.  Either install the package [bind-utils] or add the command [nslookup] to the path.  EXITING..."
-    exit 1
-fi
 #------------------------------------------------------------------------------------------------------
 
 #------------------------------------------ custom functions ------------------------------------------
@@ -205,15 +199,15 @@ if [[ -z "$NO_APICUP" ]]; then
     #grab version
     apicup version --semver > "${APICUP_DATA}/apicup.version"
 
-    #deploy busybox
-    kubectl get pods -n default 2>/dev/null | grep -q busybox
+    #check if portal pods are availble to use nslookup
+    kubectl get pods --all-namespaces | grep -q "apic-portal-www"
     if [[ $? -eq 0 ]]; then
-        REMOVE_BUSYBOX=0
-    else
-        #install busybox pod
-        REMOVE_BUSYBOX=1
-        kubectl create -f https://k8s.io/examples/admin/dns/busybox.yaml &>/dev/null
-        sleep 10
+        OUTPUT1=`kubectl get pods --all-namespaces | grep "apic-portal-www"`
+        while read line1; do
+            PORTAL_NAMESPACE=`echo "${line1}" | awk -F' ' '{print $1}'`
+            PORTAL_PODNAME=`echo "${line1}" | awk -F' ' '{print $2}'`
+            break
+        done <<< "$OUTPUT1"
     fi
 
     #loop through subsystems
@@ -228,33 +222,30 @@ if [[ -z "$NO_APICUP" ]]; then
             apicup subsys health-check --verbose $line1 &>"${APICUP_HEALTHCHECK_DATA}/${line1}.out"
 
             #check each endpoint using nslookup
-            OUTPUT2=`apicup subsys get $line1 2>/dev/null`
-            START_READ=0
-            i=0
-            while read line2; do
-                lc_line2=`echo "${line2}" | tr "[A-Z]" "[a-z]"`
-                if [[ "${lc_line2}" == *"endpoints"* ]]; then
-                    i=4
-                    START_READ=1
-                elif [[ $START_READ -eq 1 && $i -gt 0 ]]; then
-                    ((i--))
-                elif [[ $START_READ -eq 1 && $i -eq 0 && ${#line2} -eq 0 ]]; then
-                    break
-                elif [[ $START_READ -eq 1 && $i -eq 0 ]]; then
-                    name=`echo "$line2" | awk -F' ' '{print $1}'`
-                    endpoint=`echo "$line2" | awk -F' ' '{print $2}'`
+            if [[ -z "$PORTAL_NAMESPACE" && -z "$PORTAL_PODNAME" ]]; then
+                OUTPUT2=`apicup subsys get $line1 2>/dev/null`
+                START_READ=0
+                i=0
+                while read line2; do
+                    lc_line2=`echo "${line2}" | tr "[A-Z]" "[a-z]"`
+                    if [[ "${lc_line2}" == *"endpoints"* ]]; then
+                        i=4
+                        START_READ=1
+                    elif [[ $START_READ -eq 1 && $i -gt 0 ]]; then
+                        ((i--))
+                    elif [[ $START_READ -eq 1 && $i -eq 0 && ${#line2} -eq 0 ]]; then
+                        break
+                    elif [[ $START_READ -eq 1 && $i -eq 0 ]]; then
+                        name=`echo "$line2" | awk -F' ' '{print $1}'`
+                        endpoint=`echo "$line2" | awk -F' ' '{print $2}'`
 
-                    echo -e "$ nslookup $endpoint\n" >"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
-                    kubectl exec -n default busybox -- nslookup $endpoint >>"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
-                fi
-            done <<< "$OUTPUT2"
+                        echo -e "$ nslookup $endpoint\n" >"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
+                        kubectl exec -n $PORTAL_NAMESPACE $PORTAL_PODNAME -- nslookup $endpoint >>"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
+                    fi
+                done <<< "$OUTPUT2"
+            fi
         fi
     done <<< "$OUTPUT1"
-
-    #remove busybox pod
-    if [[ $REMOVE_BUSYBOX -eq 1 ]]; then
-        kubectl delete -f https://k8s.io/examples/admin/dns/busybox.yaml &>/dev/null
-    fi
 
     #grab configuration file
     if [[ -f "$APICUP_PROJECT_PATH/apiconnect-up.yml" ]]; then
@@ -824,6 +815,8 @@ for NAMESPACE in $NAMESPACE_LIST; do
                 #grab gwd-log.log
                 kubectl cp -n $NAMESPACE "${pod}:/drouter/temporary/log/apiconnect/gwd-log.log" "${GATEWAY_DIAGNOSTIC_DATA}/gwd-log.log" &>/dev/null
 
+                
+
                 #open SOMA port to localhost
                 kubectl port-forward ${pod} 5550:5550 -n ${NAMESPACE} 1>/dev/null 2>/dev/null &
                 pid=$!
@@ -849,20 +842,32 @@ for NAMESPACE in $NAMESPACE_LIST; do
                     sleep $ERROR_REPORT_SLEEP_TIMEOUT
 
                     #this will give a link that points to the target error report
-                    kubectl cp -n $NAMESPACE "${pod}:/drouter/temporary/error-report.txt.gz" "${GATEWAY_DIAGNOSTIC_DATA}/error-report.txt.gz" &>/dev/null
+                    kubectl cp -n $NAMESPACE "${pod}:/drouter/temporary/error-report.txt.gz" "${GATEWAY_DIAGNOSTIC_DATA}/error-report.txt.gz" 1>/dev/null 2>"${GATEWAY_DIAGNOSTIC_DATA}/output.error"
 
-                    #extract path
-                    REPORT_PATH=`ls -l ${GATEWAY_DIAGNOSTIC_DATA} | grep error-report.txt.gz | awk -F' ' '{print $NF}'`
-                    if [[ -n "$REPORT_PATH" ]]; then
+                    #check error output for path to actual error report
+                    REPORT_PATH=`cat "${GATEWAY_DIAGNOSTIC_DATA}/output.error" | awk -F'"' '{print $4}'`
+                    if [[ -z "$REPORT_PATH" ]]; then
+                        REPORT_PATH=`ls -l ${GATEWAY_DIAGNOSTIC_DATA} | grep error-report.txt.gz | awk -F' ' '{print $NF}'`
+                        if [[ -n "$REPORT_PATH" ]]; then
+                            #extract filename from path
+                            REPORT_NAME=$(basename $REPORT_PATH)
+
+                            #grab error report
+                            kubectl cp -n $NAMESPACE "${pod}:${REPORT_PATH}" "${GATEWAY_DIAGNOSTIC_DATA}/${REPORT_NAME}" &>/dev/null
+                        fi
+
+                        #remove link
+                        rm -f "${GATEWAY_DIAGNOSTIC_DATA}/error-report.txt.gz"
+                    else
                         #extract filename from path
                         REPORT_NAME=$(basename $REPORT_PATH)
 
                         #grab error report
                         kubectl cp -n $NAMESPACE "${pod}:${REPORT_PATH}" "${GATEWAY_DIAGNOSTIC_DATA}/${REPORT_NAME}" &>/dev/null
-                    fi
 
-                    #remove link
-                    rm -f "${GATEWAY_DIAGNOSTIC_DATA}/error-report.txt.gz"
+                        #clean up
+                        rm -f "${GATEWAY_DIAGNOSTIC_DATA}/output.error"
+                    fi
                 fi
 
                 #clean up
