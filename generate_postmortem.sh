@@ -14,9 +14,6 @@ for switch in $@; do
         *"-h"*|*"--help"*)
             echo -e 'Usage: generate_postmortem.sh {optional: LOG LIMIT}'
             echo -e ""
-            echo -e "LOG LIMIT defaults to pull a maximum of 10000 lines from each pod."
-            echo -e 'LOG LIMIT (if specified) must be >= 0.  (0 means no limit, not recommended)'
-            echo -e ""
             echo -e "Set environment variable [APICUP_PROJECT_PATH] to the Install Assist project directory."
             echo -e 'Set using command:  export APICUP_PROJECT_PATH="/path/to/directory"'
             echo -e 'If apicup project is not available, pass the switch "--no-apicup"'
