@@ -22,6 +22,7 @@ for switch in $@; do
             echo -e 'If apicup project is not available, pass the switch "--no-apicup"'
             echo -e ""
             echo -e "Available switches:"
+            echo -e "--log-limit:           Set the number of lines to collect from each pod logs."
             echo -e "--debug:               Set to enable verbose loggiing."
             echo -e "--diagnostic-all:      Set to enable all diagnostic data."
             echo -e "--diagnostic-gateway:  Set to include additional gateway specific data."
@@ -34,9 +35,6 @@ for switch in $@; do
         *"--debug"*)
             set -x
             DEBUG_SET=1
-            if [[ $# -eq 1 ]]; then
-                LOG_LIMIT="--tail=10000"
-            fi
             ;;
         *"--no-apicup"*)
             NO_APICUP=1
@@ -59,19 +57,13 @@ for switch in $@; do
         *"--diagnostic-portal"*)
             DIAG_PORTAL=1
             ;;
-        *)
-            if [[ "$switch" =~ ^[0-9]+$ ]]; then
-                if [[ $switch -eq 0 ]]; then
-                    #proceed with no log limit set
-                    echo -e "Proceeding with no log limit set, this process may take quite some time to complete."
-                    LOG_LIMIT=""
-                else
-                    LOG_LIMIT="--tail=$1"
-                fi
-            else
-                echo -e "Parameter [LOG_LIMIT] invalid, EXITING..."
-                exit 1
+        *"--log-limit"*)
+            limit=`echo "${switch}" | awk -F'=' '{print $2}'`
+            if [[ "$limit" =~ ^[0-9]+$ ]]; then
+                LOG_LIMIT="--tail=\"${limit}\""
             fi
+            ;;
+        *)
             if [[ -z "$DEBUG_SET" ]]; then
                 set +e
             fi
@@ -79,13 +71,8 @@ for switch in $@; do
     esac
 done
 
-if [[ $# -eq 0 ]]; then
-    #set defaults
-    LOG_LIMIT="--tail=10000"
-    set +e
-fi
 if [[ -z "$LOG_LIMIT" ]]; then
-    LOG_LIMIT="--tail=10000"
+    LOG_LIMIT=""
 fi
 
 #====================================== Confirm pre-reqs and init variables ======================================
