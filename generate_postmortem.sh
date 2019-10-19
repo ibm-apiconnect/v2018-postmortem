@@ -19,13 +19,14 @@ for switch in $@; do
             echo -e 'If apicup project is not available, pass the switch "--no-apicup"'
             echo -e ""
             echo -e "Available switches:"
-            echo -e "--log-limit:           Set the number of lines to collect from each pod logs."
-            echo -e "--debug:               Set to enable verbose loggiing."
-            echo -e "--diagnostic-all:      Set to enable all diagnostic data."
-            echo -e "--diagnostic-gateway:  Set to include additional gateway specific data."
-            echo -e "--diagnostic-portal:   Set to include additional portal specific data."
-            echo -e "--no-apicup:           Set if Install Assist project directory is not available."
-            echo -e "--ova:                 Only set if running inside an OVA deployment."
+            echo -e "--log-limit:             Set the number of lines to collect from each pod logs."
+            echo -e "--debug:                 Set to enable verbose loggiing."
+            echo -e "--diagnostic-all:        Set to enable all diagnostic data."
+            echo -e "--diagnostic-gateway:    Set to include additional gateway specific data."
+            echo -e "--diagnostic-portal:     Set to include additional portal specific data."
+            echo -e "--diagnostic-analytics:  Set to include additional portal specific data."
+            echo -e "--no-apicup:             Set if Install Assist project directory is not available."
+            echo -e "--ova:                   Only set if running inside an OVA deployment."
             echo -e ""
             exit 0
             ;;
@@ -44,6 +45,7 @@ for switch in $@; do
             DIAG_MANAGER=1
             DIAG_GATEWAY=1
             DIAG_PORTAL=1
+            DIAG_ANALYTICS=1
             ;;
         *"--diagnostic-manager"*)
             DIAG_MANAGER=1
@@ -54,10 +56,13 @@ for switch in $@; do
         *"--diagnostic-portal"*)
             DIAG_PORTAL=1
             ;;
+        *"--diagnostic-analytics"*)
+            DIAG_ANALYTICS=1
+            ;;
         *"--log-limit"*)
-            limit=`echo "${switch}" | awk -F'=' '{print $2}'`
+            limit=`echo "${switch}" | cut -d'=' -f2`
             if [[ "$limit" =~ ^[0-9]+$ ]]; then
-                LOG_LIMIT="--tail=\"${limit}\""
+                LOG_LIMIT="--tail=${limit}"
             fi
             ;;
         *)
@@ -359,9 +364,23 @@ done <<< "$OUTPUT"
 [[ ! -z "$SUBSYS_PORTAL" ]] || SUBSYS_PORTAL="ISNOTSET"
 [[ ! -z "$SUBSYS_CASSANDRA_OPERATOR" ]] || SUBSYS_CASSANDRA_OPERATOR="ISNOTSET"
 [[ ! -z "$SUBSYS_ANALYTICS" ]] || SUBSYS_GATEWAY="ISNOTSET"
-[[ ! -z "$SUBSYS_INGRESS" ]] || SUBSYS_INGRESS="ISNOTSET"
-#=================================================================================================================
+if [[ -z "$SUBSYS_INGRESS" ]]; then
+    SUBSYS_INGRESS="ISNOTSET"
 
+    #check all namespaces  "ingress-nginx" controller if variable SUBSYS_INGRESS not set (meaning not deployed via helm)
+    OUTPUT=`kubectl get namespaces 2>null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        while read line; do
+            namespace=`echo "$line" | cut -d' ' -f1`
+            kubectl get pods $namespace | grep -q "ingress-nginx"
+            if [[ ? -eq 0 ]]; then
+                NAMESPACE_LIST+=" $namespace"
+                break
+            fi
+        done <<< "$OUTPUT"
+    fi
+fi
+#=================================================================================================================
 
 #============================================= pull kubernetes data ==============================================
 #----------------------------------------- create directories -----------------------------------------
@@ -550,6 +569,10 @@ for NAMESPACE in $NAMESPACE_LIST; do
     K8S_NAMESPACES_PVC_DATA="${K8S_NAMESPACES_SPECIFIC}/pvc"
     K8S_NAMESPACES_PVC_DESCRIBE_DATA="${K8S_NAMESPACES_PVC_DATA}/describe"
 
+    K8S_NAMESPACES_REPLICASET_DATA="${K8S_NAMESPACES_SPECIFIC}/replicasets"
+    K8S_NAMESPACES_REPLICASET_YAML_OUTPUT="${K8S_NAMESPACES_REPLICASET_DATA}/yaml"
+    K8S_NAMESPACES_REPLICASET_DESCRIBE_DATA="${K8S_NAMESPACES_REPLICASET_DATA}/describe"
+
     K8S_NAMESPACES_ROLE_DATA="${K8S_NAMESPACES_SPECIFIC}/roles"
     K8S_NAMESPACES_ROLE_DESCRIBE_DATA="${K8S_NAMESPACES_ROLE_DATA}/describe"
 
@@ -587,6 +610,9 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
     mkdir -p $K8S_NAMESPACES_PVC_DESCRIBE_DATA
 
+    mkdir -p $K8S_NAMESPACES_REPLICASET_YAML_OUTPUT
+    mkdir -p $K8S_NAMESPACES_REPLICASET_DESCRIBE_DATA
+
     mkdir -p $K8S_NAMESPACES_ROLE_DESCRIBE_DATA
 
     mkdir -p $K8S_NAMESPACES_ROLEBINDING_DESCRIBE_DATA
@@ -609,6 +635,8 @@ for NAMESPACE in $NAMESPACE_LIST; do
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/ingress.out"
     OUTPUT=`kubectl get secrets -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/secrets.out"
+    OUTPUT=`kubectl get hpa -n $NAMESPACE 2>/dev/null`
+    [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/hpa.out"
 
     #grab cassandra data
     OUTPUT=`kubectl get cassandraclusters -n $NAMESPACE 2>/dev/null`
@@ -689,7 +717,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
     #grab daemonset data
     OUTPUT=`kubectl get daemonset -n $NAMESPACE 2>/dev/null`
     if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
-        echo "$OUTPUT" > "${K8S_NAMESPACES_DAEMONSET_DATA}/endpoints.out"
+        echo "$OUTPUT" > "${K8S_NAMESPACES_DAEMONSET_DATA}/daemonset.out"
         while read line; do
             ds=`echo "$line" | cut -d' ' -f1`
             kubectl describe daemonset $ds -n $NAMESPACE &>"${K8S_NAMESPACES_DAEMONSET_DESCRIBE_DATA}/${ds}.out"
@@ -745,6 +773,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
             IS_INGRESS=0
             IS_GATEWAY=0
             IS_PORTAL=0
+            IS_ANALYTICS=0
 
             case $NAMESPACE in
                 "kube-system")
@@ -769,10 +798,11 @@ for NAMESPACE in $NAMESPACE_LIST; do
                 *)
                     if [[ "$SUBSYS_ANALYTICS" == *"$pod_helm_release"* ]]; then
                         SUBFOLDER="analytics"
+                        IS_ANALYTICS=1
                     elif [[ "$SUBSYS_GATEWAY" == *"$pod_helm_release"* ]]; then
                         SUBFOLDER="gateway"
                         IS_GATEWAY=1
-                    elif [[ "$SUBSYS_INGRESS" == *"$pod_helm_release"* ]]; then
+                    elif [[ "$SUBSYS_INGRESS" == *"$pod_helm_release"* || "${pod}" == *"ingress-nginx"* ]]; then
                         IS_INGRESS=1
                         SUBFOLDER="ingress"
                     elif [[ "$SUBSYS_MANAGER" == *"$pod_helm_release"* ]]; then
@@ -883,6 +913,30 @@ for NAMESPACE in $NAMESPACE_LIST; do
                 IS_GATEWAY=0
             fi
 
+            #grab analytics diagnostic data
+            if [[ $DIAG_ANALYTICS -eq 1 && $IS_ANALYTICS -eq 1 && "$ready" == "1/1" && "$status" == "Running" ]]; then
+                ANALYTICS_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/analytics/${node}"
+                mkdir -p $ANALYTICS_DIAGNOSTIC_DATA
+
+                if [[ "$pod" == *"storage-data"* ]]; then
+                    OUTPUT1=`kubectl exec -n $NAMESPACE $pod -- curl_es -s "_cluster/health?pretty"`
+                    echo "$OUTPUT1" >"${ANALYTICS_DIAGNOSTIC_DATA}/curl-cluster_health.out"
+                    OUTPUT1=`kubectl exec -n $NAMESPACE $pod -- curl_es -s "_cat/nodes?v"`
+                    echo "$OUTPUT1" >"${ANALYTICS_DIAGNOSTIC_DATA}/curl-cat_nodes.out"
+                    OUTPUT1=`kubectl exec -n $NAMESPACE $pod -- curl_es -s "_cat/indices?v"`
+                    echo "$OUTPUT1" >"${ANALYTICS_DIAGNOSTIC_DATA}/curl-cat_indices.out"
+                    OUTPUT1=`kubectl exec -n $NAMESPACE $pod -- curl_es -s "_cat/shards?v"`
+                    echo "$OUTPUT1" >"${ANALYTICS_DIAGNOSTIC_DATA}/curl-cat_shards.out"
+                    OUTPUT1=`kubectl exec -n $NAMESPACE $pod -- curl_es -s "_alias?pretty"`
+                    echo "$OUTPUT1" >"${ANALYTICS_DIAGNOSTIC_DATA}/curl-alias.out"
+                    OUTPUT1=`kubectl exec -n $NAMESPACE $pod -- curl_es -s "_cluster/allocation/explain?pretty"`
+                    echo "$OUTPUT1" >"${ANALYTICS_DIAGNOSTIC_DATA}/curl-cluster_allocation_explain.out"
+                elif [[ "$pod" == *"ingestion"* ]]; then
+                    OUTPUT1=`kubectl exec -n $NAMESPACE $pod -- curl -s "localhost:9600/_node/stats?pretty"`
+                    echo "$OUTPUT1" >"${ANALYTICS_DIAGNOSTIC_DATA}/curl-node_stats.out"
+                fi
+            fi
+
             #write out pod descriptions
             kubectl describe pod -n $NAMESPACE $pod &> "${DESCRIBE_TARGET_PATH}/${pod}.out"
             [ $? -eq 0 ] || rm -f "${DESCRIBE_TARGET_PATH}/${pod}.out"
@@ -890,10 +944,10 @@ for NAMESPACE in $NAMESPACE_LIST; do
             #write out logs
             for container in `kubectl get pod -n $NAMESPACE $pod -o jsonpath="{.spec.containers[*].name}" 2>/dev/null`; do
                 kubectl logs -n $NAMESPACE $pod -c $container $LOG_LIMIT &> "${LOG_TARGET_PATH}/${pod}_${container}.log"
-                [[ $? -eq 0 && -s "${LOG_TARGET_PATH}/${pod}_${container}.log" ]] || rm -f "${LOG_TARGET_PATH}/${pod}_${container}.log"
+                [[ $? -eq 0 && -s "${LOG_TARGENT_PATH}/${pod}_${container}.log" ]] || rm -f "${LOG_TARGET_PATH}/${pod}_${container}.log"
 
                 kubectl logs --previous -n $NAMESPACE $pod -c $container $LOG_LIMIT &> "${LOG_TARGET_PATH}/${pod}_${container}_previous.log"
-                [[ $? -eq 0 && -s  "${LOG_TARGET_PATH}/${pod}_${container}_previous.log" ]] || rm -f "${LOG_TARGET_PATH}/${pod}_${container}_previous.log"
+                [[ $? -eq 0 && -s "${LOG_TARGET_PATH}/${pod}_${container}_previous.log" ]] || rm -f "${LOG_TARGET_PATH}/${pod}_${container}_previous.log"
 
                 #grab portal data
                 if [[ $DIAG_PORTAL -eq 1 && $IS_PORTAL -eq 1 && "$status" == "Running" ]]; then
@@ -968,6 +1022,22 @@ for NAMESPACE in $NAMESPACE_LIST; do
         done <<< "$OUTPUT"
     else
         rm -fr $K8S_NAMESPACES_PVC_DATA
+    fi
+
+    #grab replicaset data
+    OUTPUT=`kubectl get replicaset -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_REPLICASET_DATA}/replicaset.out"
+        while read line; do
+            rs=`echo "$line" | cut -d' ' -f1`
+            kubectl describe replicaset $rs -n $NAMESPACE &>"${K8S_NAMESPACES_REPLICASET_DESCRIBE_DATA}/${rs}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_REPLICASET_DESCRIBE_DATA}/${rs}.out"
+
+            kubectl get replicaset $rs -o yaml -n $NAMESPACE &>"${K8S_NAMESPACES_REPLICASET_YAML_OUTPUT}/${rs}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_REPLICASET_YAML_OUTPUT}/${rs}.out"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_REPLICASET_DATA
     fi
 
     #grab role data
