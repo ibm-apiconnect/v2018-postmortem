@@ -1113,8 +1113,9 @@ for NAMESPACE in $NAMESPACE_LIST; do
     #transform portal data
     TARGET_DIRECTORY="${K8S_NAMESPACES_POD_LOG_DATA}/portal"
     CONTAINERS=(admin web)
+    DIR_CONTENTS=`ls -A ${TARGET_DIRECTORY}`
 
-    if [[ -d "${TARGET_DIRECTORY}" ]]; then
+    if [[ -d "${TARGET_DIRECTORY}" && ! -z "${DIR_CONTENTS}" ]]; then
         for container in ${CONTAINERS[@]}; do
             cd $TARGET_DIRECTORY
 
