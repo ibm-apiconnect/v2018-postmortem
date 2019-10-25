@@ -367,13 +367,13 @@ done <<< "$OUTPUT"
 if [[ -z "$SUBSYS_INGRESS" ]]; then
     SUBSYS_INGRESS="ISNOTSET"
 
-    #check all namespaces  "ingress-nginx" controller if variable SUBSYS_INGRESS not set (meaning not deployed via helm)
+    #check all namespaces "ingress-nginx" controller if variable SUBSYS_INGRESS not set (meaning not deployed via helm)
     OUTPUT=`kubectl get namespaces 2>null`
     if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
         while read line; do
             namespace=`echo "$line" | cut -d' ' -f1`
             kubectl get pods $namespace | grep -q "ingress-nginx"
-            if [[ ? -eq 0 ]]; then
+            if [[ #? -eq 0 ]]; then
                 NAMESPACE_LIST+=" $namespace"
                 break
             fi
@@ -944,7 +944,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
             #write out logs
             for container in `kubectl get pod -n $NAMESPACE $pod -o jsonpath="{.spec.containers[*].name}" 2>/dev/null`; do
                 kubectl logs -n $NAMESPACE $pod -c $container $LOG_LIMIT &> "${LOG_TARGET_PATH}/${pod}_${container}.log"
-                [[ $? -eq 0 && -s "${LOG_TARGENT_PATH}/${pod}_${container}.log" ]] || rm -f "${LOG_TARGET_PATH}/${pod}_${container}.log"
+                [[ $? -eq 0 && -s "${LOG_TARGET_PATH}/${pod}_${container}.log" ]] || rm -f "${LOG_TARGET_PATH}/${pod}_${container}.log"
 
                 kubectl logs --previous -n $NAMESPACE $pod -c $container $LOG_LIMIT &> "${LOG_TARGET_PATH}/${pod}_${container}_previous.log"
                 [[ $? -eq 0 && -s "${LOG_TARGET_PATH}/${pod}_${container}_previous.log" ]] || rm -f "${LOG_TARGET_PATH}/${pod}_${container}_previous.log"
