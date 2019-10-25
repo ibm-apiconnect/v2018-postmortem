@@ -204,7 +204,7 @@ if [[ -z "$NO_APICUP" ]]; then
     #grab version
     apicup version --semver > "${APICUP_DATA}/apicup.version"
 
-    #check if portal pods are availble to use nslookup
+    #check if portal pods are available to use nslookup
     kubectl get pods --all-namespaces | grep -q "apic-portal-www"
     if [[ $? -eq 0 ]]; then
         OUTPUT1=`kubectl get pods --all-namespaces | grep "apic-portal-www"`
@@ -838,14 +838,12 @@ for NAMESPACE in $NAMESPACE_LIST; do
             fi
 
             #grab gateway diagnostic data
-            if [[ $DIAG_GATEWAY -eq 1 && $IS_GATEWAY -eq 1 && "$ready" == "1/1" && "$status" == "Running" ]]; then
+            if [[ $DIAG_GATEWAY -eq 1 && $IS_GATEWAY -eq 1 && "$ready" == "1/1" && "$status" == "Running" && "$pod" == *"dynamic-gateway-service"* ]]; then
                 GATEWAY_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/gateway/${node}"
                 mkdir -p $GATEWAY_DIAGNOSTIC_DATA
 
                 #grab gwd-log.log
                 kubectl cp -n $NAMESPACE "${pod}:/drouter/temporary/log/apiconnect/gwd-log.log" "${GATEWAY_DIAGNOSTIC_DATA}/gwd-log.log" &>/dev/null
-
-                
 
                 #open SOMA port to localhost
                 kubectl port-forward ${pod} 5550:5550 -n ${NAMESPACE} 1>/dev/null 2>/dev/null &
@@ -1113,7 +1111,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
     #transform portal data
     TARGET_DIRECTORY="${K8S_NAMESPACES_POD_LOG_DATA}/portal"
     CONTAINERS=(admin web)
-    DIR_CONTENTS=`ls -A ${TARGET_DIRECTORY}`
+    DIR_CONTENTS=`ls -A ${TARGET_DIRECTORY} 2>/dev/null`
 
     if [[ -d "${TARGET_DIRECTORY}" && ! -z "${DIR_CONTENTS}" ]]; then
         for container in ${CONTAINERS[@]}; do
