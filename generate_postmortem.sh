@@ -373,7 +373,7 @@ if [[ -z "$SUBSYS_INGRESS" ]]; then
         while read line; do
             namespace=`echo "$line" | cut -d' ' -f1`
             kubectl get pods $namespace | grep -q "ingress-nginx"
-            if [[ #? -eq 0 ]]; then
+            if [[ $? -eq 0 ]]; then
                 NAMESPACE_LIST+=" $namespace"
                 break
             fi
