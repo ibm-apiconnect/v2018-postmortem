@@ -27,6 +27,7 @@ for switch in $@; do
             echo -e "--diagnostic-analytics:  Set to include additional portal specific data."
             echo -e "--no-apicup:             Set if Install Assist project directory is not available."
             echo -e "--ova:                   Only set if running inside an OVA deployment."
+            echo -e "--extra-namespaces:      Extra namespaces separated with commas.  Example:  --extra-namespaces=dev1,dev2,dev3"
             echo -e ""
             exit 0
             ;;
@@ -64,6 +65,10 @@ for switch in $@; do
             if [[ "$limit" =~ ^[0-9]+$ ]]; then
                 LOG_LIMIT="--tail=${limit}"
             fi
+            ;;
+        *"--extra-namespaces"*)
+            extra_namespaces=`echo "${switch}" | cut -d'=' -f2 | tr ',' ' '`
+            NAMESPACE_LIST="kube-system ${extra_namespaces}"
             ;;
         *)
             if [[ -z "$DEBUG_SET" ]]; then
@@ -146,7 +151,9 @@ TIMESTAMP=`date +%Y%m%dT%H%M%S%Z`
 TEMP_NAME="postmortem-$TIMESTAMP"
 TEMP_PATH="${LOG_PATH}/${TEMP_NAME}"
 
-NAMESPACE_LIST="kube-system"
+if [[ -z "$NAMESPACE_LIST" ]]; then
+    NAMESPACE_LIST="kube-system"
+fi
 ARCHIVE_FILE=""
 
 ERROR_REPORT_SLEEP_TIMEOUT=30
@@ -225,30 +232,6 @@ if [[ -z "$NO_APICUP" ]]; then
 
             #grab health-check data
             apicup subsys health-check --verbose $line1 &>"${APICUP_HEALTHCHECK_DATA}/${line1}.out"
-
-            #check each endpoint using nslookup
-            if [[ -z "$PORTAL_NAMESPACE" && -z "$PORTAL_PODNAME" ]]; then
-                OUTPUT2=`apicup subsys get $line1 2>/dev/null`
-                START_READ=0
-                i=0
-                while read line2; do
-                    lc_line2=`echo "${line2}" | tr "[A-Z]" "[a-z]"`
-                    if [[ "${lc_line2}" == *"endpoints"* ]]; then
-                        i=4
-                        START_READ=1
-                    elif [[ $START_READ -eq 1 && $i -gt 0 ]]; then
-                        ((i--))
-                    elif [[ $START_READ -eq 1 && $i -eq 0 && ${#line2} -eq 0 ]]; then
-                        break
-                    elif [[ $START_READ -eq 1 && $i -eq 0 ]]; then
-                        name=`echo "$line2" | awk -F' ' '{print $1}'`
-                        endpoint=`echo "$line2" | awk -F' ' '{print $2}'`
-
-                        echo -e "$ nslookup $endpoint\n" >"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
-                        kubectl exec -n $PORTAL_NAMESPACE $PORTAL_PODNAME -- nslookup $endpoint >>"${APICUP_ENDPOINT_DATA}/nslookup-${name}.out"
-                    fi
-                done <<< "$OUTPUT2"
-            fi
         fi
     done <<< "$OUTPUT1"
 
@@ -282,8 +265,12 @@ fi
 #----------------------------------------- create directories -----------------------------------------
 HELM_DATA="${TEMP_PATH}/helm"
 HELM_DEPLOYMENT_DATA="${HELM_DATA}/deployments"
+HELM_HISTORY_DATA="${HELM_DATA}/history"
+HELM_RELEASE_DATA="${HELM_DATA}/releases"
 
 mkdir -p $HELM_DEPLOYMENT_DATA
+mkdir -p $HELM_HISTORY_DATA
+mkdir -p $HELM_RELEASE_DATA
 #------------------------------------------------------------------------------------------------------
 
 #grab version
@@ -353,8 +340,12 @@ while read line; do
         [ $? -eq 0 ] || rm -f "${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out"
 
         #grab history
-        helm history $release --col-width 5000 &> "${HELM_DATA}/${release}_${chart}-history.out"
-        [ $? -eq 0 ] || rm -f "${HELM_DATA}/${release}_${chart}-history.out"
+        helm history $release --col-width 5000 &> "${HELM_HISTORY_DATA}/${release}_${chart}.out"
+        [ $? -eq 0 ] || rm -f "${HELM_HISTORY_DATA}/${release}_${chart}.out"
+
+        #grab release data
+        helm get $release &> "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
+        [ $? -eq 0 ] || rm -f "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
     fi
 done <<< "$OUTPUT"
 
@@ -558,6 +549,8 @@ for NAMESPACE in $NAMESPACE_LIST; do
     K8S_NAMESPACES_ENDPOINT_DESCRIBE_DATA="${K8S_NAMESPACES_ENDPOINT_DATA}/describe"
     K8S_NAMESPACES_ENDPOINT_YAML_OUTPUT="${K8S_NAMESPACES_ENDPOINT_DATA}/yaml"
 
+    K8S_NAMESPACES_INGRESS_ENDPOINT_DATA="${K8S_NAMESPACES_SPECIFIC}/ingress_endpoint_checks"
+
     K8S_NAMESPACES_JOB_DATA="${K8S_NAMESPACES_SPECIFIC}/jobs"
     K8S_NAMESPACES_JOB_DESCRIBE_DATA="${K8S_NAMESPACES_JOB_DATA}/describe"
     
@@ -603,6 +596,8 @@ for NAMESPACE in $NAMESPACE_LIST; do
     mkdir -p $K8S_NAMESPACES_ENDPOINT_DESCRIBE_DATA
     mkdir -p $K8S_NAMESPACES_ENDPOINT_YAML_OUTPUT
 
+    mkdir -p $K8S_NAMESPACES_INGRESS_ENDPOINT_DATA
+
     mkdir -p $K8S_NAMESPACES_JOB_DESCRIBE_DATA
 
     mkdir -p $K8S_NAMESPACES_POD_DESCRIBE_DATA
@@ -628,15 +623,36 @@ for NAMESPACE in $NAMESPACE_LIST; do
         mkdir -p "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager" 
     fi
 
+    #for icp4i platform, grab equivalent "apiconnect-up.yml"
+    OUTPUT=`kubectl get apiconnectclusters -o yaml -n $NAMESPACE 2>/dev/null`
+    [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_SPECIFIC}/apiconnectclusters.yml"
+
     #grab lists
     OUTPUT=`kubectl get events -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/events.out"
-    OUTPUT=`kubectl get ingress -n $NAMESPACE 2>/dev/null`
-    [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/ingress.out"
     OUTPUT=`kubectl get secrets -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/secrets.out"
     OUTPUT=`kubectl get hpa -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/hpa.out"
+    OUTPUT1=`kubectl get ingress -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT1} -gt 0 ]]; then
+        echo "$OUTPUT1" > "${K8S_NAMESPACES_LIST_DATA}/ingress.out"
+
+        #check each endpoint using nslookup
+        if [[ ! -z "$PORTAL_NAMESPACE" && ! -z "$PORTAL_PODNAME" ]]; then
+            echo -e  "\n\n----- Test for ingress endpoint DNS connectivity -----" >> "${K8S_NAMESPACES_LIST_DATA}/ingress.out"
+
+            while read line; do
+                ingress=`echo "$line" | awk -F' ' '{print $1}'`
+                endpoint=`echo "$line" | awk -F' ' '{print $2}'`
+
+                if [[ "$ingress" != "NAME" ]]; then
+                    OUTPUT2=`kubectl exec -n $PORTAL_NAMESPACE -c admin $PORTAL_PODNAME -- nslookup $endpoint`
+                    [[ ${#OUTPUT2} -eq 0 ]] || echo -e "$ nslookup ${endpoint}\n${OUTPUT2}\n\n" >> "${K8S_NAMESPACES_LIST_DATA}/ingress.out"
+                fi
+            done <<< "$OUTPUT1"
+        fi
+    fi
 
     #grab cassandra data
     OUTPUT=`kubectl get cassandraclusters -n $NAMESPACE 2>/dev/null`
@@ -916,7 +932,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
                 ANALYTICS_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/analytics/${node}"
                 mkdir -p $ANALYTICS_DIAGNOSTIC_DATA
 
-                if [[ "$pod" == *"storage-data"* ]]; then
+                if [[ "$pod" == *"storage-data"* || "$pod" == *"storage-basic"* ]]; then
                     OUTPUT1=`kubectl exec -n $NAMESPACE $pod -- curl_es -s "_cluster/health?pretty"`
                     echo "$OUTPUT1" >"${ANALYTICS_DIAGNOSTIC_DATA}/curl-cluster_health.out"
                     OUTPUT1=`kubectl exec -n $NAMESPACE $pod -- curl_es -s "_cat/nodes?v"`
