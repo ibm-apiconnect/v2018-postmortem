@@ -823,7 +823,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
         #check each endpoint using nslookup
         if [[ ! -z "$PORTAL_NAMESPACE" && ! -z "$PORTAL_PODNAME" ]]; then
-            echo -e  "\n\n----- Test for ingress endpoint DNS connectivity -----" >> "${K8S_NAMESPACES_LIST_DATA}/ingress.out"
+            echo -e  "\n\n----- Test for ingress endpoint DNS connectivity -----" >> "${K8S_NAMESPACES_LIST_DATA}/${outfile}"
 
             while read line; do
                 ingress=`echo "$line" | awk -F' ' '{print $1}'`
@@ -831,7 +831,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
                 if [[ "$ingress" != "NAME" ]]; then
                     OUTPUT2=`kubectl exec -n $PORTAL_NAMESPACE -c admin $PORTAL_PODNAME -- nslookup $endpoint`
-                    [[ ${#OUTPUT2} -eq 0 ]] || echo -e "$ nslookup ${endpoint}\n${OUTPUT2}\n\n" >> "${K8S_NAMESPACES_LIST_DATA}/ingress.out"
+                    [[ ${#OUTPUT2} -eq 0 ]] || echo -e "$ nslookup ${endpoint}\n${OUTPUT2}\n\n" >> "${K8S_NAMESPACES_LIST_DATA}/${outfile}"
                 fi
             done <<< "$OUTPUT1"
         fi
