@@ -812,9 +812,14 @@ for NAMESPACE in $NAMESPACE_LIST; do
     OUTPUT=`kubectl get hpa -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/hpa.out"
     OUTPUT1=`kubectl get ingress -n $NAMESPACE 2>/dev/null`
-    [ $? -eq 0 ] || OUTPUT1=`kubectl get routes -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0]]; then
+        outfile="ingress.out"
+    else
+        OUTPUT1=`kubectl get routes -n $NAMESPACE 2>/dev/null`
+        outfile="routes.out"
+    fi
     if [[ $? -eq 0 && ${#OUTPUT1} -gt 0 ]]; then
-        echo "$OUTPUT1" > "${K8S_NAMESPACES_LIST_DATA}/ingress.out"
+        echo "$OUTPUT1" > "${K8S_NAMESPACES_LIST_DATA}/${outfile}"
 
         #check each endpoint using nslookup
         if [[ ! -z "$PORTAL_NAMESPACE" && ! -z "$PORTAL_PODNAME" ]]; then
