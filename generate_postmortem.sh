@@ -665,9 +665,6 @@ fi
 
 #check etcd cluster performance
 if [[ $PERFORMANCE_CHECK -eq 1 ]]; then
-    if [[ $IS_OVA -eq 1 ]]; then
-        apic stage etcd-check-perf -l debug &> ${K8S_CLUSTER_PERFORMANCE}/etcd-performance.out # ova has special `apic stage` command that will run the etcd performance check and a defrag after
-    else
         ETCD_POD=`kubectl get pod -n kube-system --selector component=etcd -o=jsonpath={.items[0].metadata.name} 2>/dev/null` # retrieve name of etcd pod to exec
         # parse out etcd certs from pod describe
         ETCD_CA_FILE=`kubectl describe pod -n kube-system ${ETCD_POD} | grep "\--trusted-ca-file" | cut -f2 -d"=" 2>/dev/null`
@@ -695,7 +692,6 @@ if [[ $PERFORMANCE_CHECK -eq 1 ]]; then
         # run recommeneded `etcdctl defrag` to free up storage space
         OUTPUT=`kubectl exec -n kube-system ${ETCD_POD} -- sh -c "export ETCDCTL_API=3; etcdctl defrag --endpoints="${ENDPOINTS}" --cacert=${ETCD_CA_FILE} --cert=${ETCD_CERT_FILE} --key=${ETCD_KEY_FILE}"`
         echo "${OUTPUT}" > ${K8S_CLUSTER_PERFORMANCE}/etcd-defrag.out
-    fi
 fi
 
 #------------------------------------------------------------------------------------------------------
