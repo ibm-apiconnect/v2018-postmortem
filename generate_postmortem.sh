@@ -11,64 +11,81 @@
 #parse passed arguments
 for switch in $@; do
     case $switch in
-        *"-h"*|*"--help"*)
+        "-h"|"--help")
             echo -e 'Usage: generate_postmortem.sh {optional: LOG LIMIT}'
             echo -e ""
-            echo -e "Set environment variable [APICUP_PROJECT_PATH] to the Install Assist project directory."
-            echo -e 'Set using command:  export APICUP_PROJECT_PATH="/path/to/directory"'
-            echo -e 'If apicup project is not available, pass the switch "--no-apicup"'
-            echo -e ""
             echo -e "Available switches:"
+            echo -e "--cp4i                   Specify if API Connect is deployed in a CloudPak 4i environment."
+            echo -e "--extra-namespaces:      Extra namespaces separated with commas.  Example:  --extra-namespaces=dev1,dev2,dev3"
             echo -e "--log-limit:             Set the number of lines to collect from each pod logs."
-            echo -e "--debug:                 Set to enable verbose loggiing."
+            echo -e "--ova:                   Only set if running inside an OVA deployment."
+            echo -e "--no-prompt:             Do not prompt to report auto-detected namespaces."
+            echo -e "--pull-appliance-logs:   Call [apic logs] command then package into archive file."
+            echo -e "--performance-check:     Set to run performance checks."
+            echo -e "--no-history:            Do not collect user history."
+            echo -e ""
             echo -e "--diagnostic-all:        Set to enable all diagnostic data."
+            echo -e "--diagnostic-manager:    Set to include additional manager specific data."
             echo -e "--diagnostic-gateway:    Set to include additional gateway specific data."
             echo -e "--diagnostic-portal:     Set to include additional portal specific data."
             echo -e "--diagnostic-analytics:  Set to include additional portal specific data."
-            echo -e "--no-apicup:             Set if Install Assist project directory is not available."
-            echo -e "--ova:                   Only set if running inside an OVA deployment."
-            echo -e "--extra-namespaces:      Extra namespaces separated with commas.  Example:  --extra-namespaces=dev1,dev2,dev3"
+            echo -e ""
+            echo -e "--debug:                 Set to enable verbose logging."
             echo -e ""
             exit 0
             ;;
-        *"--debug"*)
+        "--debug")
             set -x
             DEBUG_SET=1
             ;;
-        *"--no-apicup"*)
+        "--cp4i")
+            NO_APICUP=1
+            CP4I=1
+            NAMESPACE_LIST="kube-system apic"
+            ;;
+        "--no-apicup")
             NO_APICUP=1
             ;;
-        *"--ova"*)
+        "--ova")
             NO_APICUP=1
-            CAPTURE_OS_LOGS=1
+            IS_OVA=1
             ;;
-        *"--diagnostic-all"*)
+        "--diagnostic-all")
             DIAG_MANAGER=1
             DIAG_GATEWAY=1
             DIAG_PORTAL=1
             DIAG_ANALYTICS=1
             ;;
-        *"--diagnostic-manager"*)
+        "--diagnostic-manager")
             DIAG_MANAGER=1
             ;;
-        *"--diagnostic-gateway"*)
+        "--diagnostic-gateway")
             DIAG_GATEWAY=1
             ;;
-        *"--diagnostic-portal"*)
+        "--diagnostic-portal")
             DIAG_PORTAL=1
             ;;
-        *"--diagnostic-analytics"*)
+        "--diagnostic-analytics")
             DIAG_ANALYTICS=1
             ;;
-        *"--log-limit"*)
+        "--log-limit")
             limit=`echo "${switch}" | cut -d'=' -f2`
             if [[ "$limit" =~ ^[0-9]+$ ]]; then
                 LOG_LIMIT="--tail=${limit}"
             fi
             ;;
-        *"--extra-namespaces"*)
+        "--extra-namespaces")
             extra_namespaces=`echo "${switch}" | cut -d'=' -f2 | tr ',' ' '`
             NAMESPACE_LIST="kube-system ${extra_namespaces}"
+            ;;
+        "--pull-appliance-logs")
+            PULL_APPLIANCE_LOGS=1
+            ;;
+        "--performance-check")
+            PERFORMANCE_CHECK=1
+            ;;
+        "--no-history")
+            NO_HISTORY=1
             ;;
         *)
             if [[ -z "$DEBUG_SET" ]]; then
@@ -141,6 +158,48 @@ cat << EOF > $1
   </env:Body>
 </env:Envelope>
 EOF
+}
+
+#wait for pod
+wait_for_pod () {
+    ns=$1
+    waitfor=$2
+
+    echo -n ' '
+    printf "%s" "Waiting for pod [${waitfor}] to come to a 'Running' status... "
+    i=1
+    counter=0
+    sp="/-\|"
+    echo -n ' '
+
+    lcount=0
+
+    while true; do
+        if [[ $counter == "100" ]]; then
+            output=`kubectl get pods -n $ns 2>/dev/null | grep $waitfor`
+            ready1=`echo "${output}" | awk '{print $3}' | awk -F'/' '{print $1}'`
+            ready2=`echo "${output}" | awk '{print $3}' | awk -F'/' '{print $2}'`
+            status=`echo "${output}" | awk '{print $4}'`
+
+            if [[ $ready1 -eq $ready2 && "$status" == "Running" ]]; then
+                break
+            fi
+
+            counter=0
+            lcount=$((lcount+1))
+
+            if [[ $lcount -gt 100 ]]; then
+                echo -e "The pod [${waitfor}] did not come to a 'Running' status in a reasonable amount of time..."
+                exit 1
+            fi
+        fi
+
+        printf "\b${sp:i++%${#sp}:1}"
+        sleep 0.1
+
+        counter=$((counter+1))
+    done
+    echo -e '\n'
 }
 #------------------------------------------------------------------------------------------------------
 
@@ -245,19 +304,26 @@ fi
 #=================================================================================================================
 
 #================================================= pull ova data =================================================
-if [[ ! -z "$CAPTURE_OS_LOGS" ]]; then
+if [[ $IS_OVA -eq 1 ]]; then
     OVA_DATA="${TEMP_PATH}/ova"
     mkdir -p $OVA_DATA
 
     #grab version
-    apic version > "${OVA_DATA}/version.out"
+    sudo apic version 1>"${OVA_DATA}/version.out" 2>/dev/null
+
+    #grab status
+    sudo apic status 1>"${OVA_DATA}/status.out" 2>/dev/null
 
     #grab bash history
-    cp "/home/apicadm/.bash_history" "${OVA_DATA}/apicadm-bash_history.out"
-    cp "/root/.bash_history" "${OVA_DATA}/root-bash_history.out"
+    if [[ $NO_HISTORY -ne 1 ]]; then
+        cp "/home/apicadm/.bash_history" "${OVA_DATA}/apicadm-bash_history.out" &>/dev/null
+        cp "/root/.bash_history" "${OVA_DATA}/root-bash_history.out" &>/dev/null
+    fi
 
-    #grab syslog files
-    cp -f /var/log/syslog* $OVA_DATA
+    if [[ $PULL_APPLIANCE_LOGS -eq 1 ]]; then
+        cd $OVA_DATA
+        sudo apic logs &>/dev/null
+    fi
 fi
 #=================================================================================================================
 
@@ -284,86 +350,155 @@ SUBSYS_CASSANDRA_OPERATOR=""
 SUBSYS_GATEWAY=""
 SUBSYS_INGRESS=""
 
-OUTPUT=`helm ls -a 2>/dev/null`
-echo "$OUTPUT" > "${HELM_DATA}/deployments.out"
-while read line; do
-    if [[ "$line" != *"NAME"* ]]; then
-        release=`echo "$line" | awk -F ' ' '{print $1}'`
-        chart=`echo "$line" | awk -F ' ' '{print $9}'`
-        ns=`echo "$line" | awk -F ' ' '{print $(NF -0)}'`
-        namespace=""
+if [[ $CP4I -ne 1 ]]; then
+    OUTPUT=`helm ls -a 2>/dev/null`
 
-        case $chart in
-            *"apic-analytics"*) 
-                namespace=$ns
-                SUBSYS_ANALYTICS+=" $release"
-                ;;
-            *"apiconnect"*)
-                namespace=$ns
-                SUBSYS_MANAGER+=" $release"
-                ;;
-            *"apic-portal"*)
-                namespace=$ns
-                SUBSYS_PORTAL+=" $release"
-                ;;
-            *"cassandra-operator"*)
-                namespace=$ns
-                SUBSYS_CASSANDRA_OPERATOR+=" $release"
-                ;;
-            *"dynamic-gateway-service"*)
-                namespace=$ns
-                SUBSYS_GATEWAY+=" $release"
-                ;;
-            *"nginx-ingress"*)
-                namespace=$ns
-                SUBSYS_INGRESS+=" $release"
-                ;;
-            *) ;;
-        esac
+    if [[ ${#OUTPUT} -eq 0 ]]; then
+        warning1="WARNING!  Helm is not reporting any deployments, this indicates there is problem communicating with the [tiller] pod."
+        warning2="\nWithout deployment data, this tool cannot proceed.\n"
+        echo -e "${COLOR_YELLOW}${warning1}${COLOR_WHITE}$name${COLOR_YELLOW}${warning2}${COLOR_RESET}"
 
-        if [[ ! -z "$namespace" ]]; then
-            ns_found=0
-            for ns in $NAMESPACE_LIST; do
-                lc_ns=`echo "${ns}" | tr "[A-Z]" "[a-z]"`
-                lc_namespace=`echo "${namespace}" | tr "[A-Z]" "[a-z]"`
-                if [[ "${lc_namespace}" == "${lc_ns}" ]]; then
-                    ns_found=1
-                    break
+        read -p "Would you like to restart the [tiller] pod? (y/n)? " yn
+        case $yn in
+            [Yy]* )
+                OUTPUT=`kubectl get pods --all-namespaces`
+                tns=`echo "${OUTPUT}" | grep tiller | awk '{print $1}'`
+                tname=`echo "${OUTPUT}" | grep tiller | awk '{print $2}'`
+                kubectl delete pod -n $tns $tname
+
+                echo -e "Waiting for [tiller] pod to come ready..."
+
+                wait_for_pod $tns $tname
+                sleep 2
+
+                OUTPUT=`helm ls -a 2>/dev/null`
+
+                if [[ ${#OUTPUT} -eq 0 ]]; then
+                    echo -e "After restarting pod [$tname] in namespace [$tns], Helm is still not reporting any deployments."
+                    echo -e "Exiting..."
+                    exit 1
                 fi
-            done
-            if [[ $ns_found -eq 0 ]]; then
-                NAMESPACE_LIST+=" $namespace"
-            fi
-        fi
 
-        helm get values --all $release 1>"${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out" 2>/dev/null
-        [ $? -eq 0 ] || rm -f "${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out"
-
-        #grab history
-        helm history $release --col-width 5000 &> "${HELM_HISTORY_DATA}/${release}_${chart}.out"
-        [ $? -eq 0 ] || rm -f "${HELM_HISTORY_DATA}/${release}_${chart}.out"
-
-        #grab release data
-        helm get $release &> "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
-        [ $? -eq 0 ] || rm -f "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
+                ;;
+            [Nn]* )
+                echo -e "Recommend restarting the [tiller] pod in order to collect helm deployment and proceed."
+                echo -e "Exiting..."
+                exit 1
+                ;;
+        esac
     fi
-done <<< "$OUTPUT"
+
+    echo "$OUTPUT" > "${HELM_DATA}/deployments.out"
+    while read line; do
+        if [[ "$line" != *"NAME"* ]]; then
+            release=`echo "$line" | awk -F ' ' '{print $1}'`
+            chart=`echo "$line" | awk -F ' ' '{print $9}'`
+            ns=`echo "$line" | awk -F ' ' '{print $(NF -0)}'`
+            namespace=""
+
+            case $chart in
+                *"apic-analytics"*) 
+                    namespace=$ns
+                    SUBSYS_ANALYTICS+=" $release"
+                    ;;
+                *"apiconnect"*)
+                    namespace=$ns
+                    SUBSYS_MANAGER+=" $release"
+                    ;;
+                *"apic-portal"*)
+                    namespace=$ns
+                    SUBSYS_PORTAL+=" $release"
+                    ;;
+                *"cassandra-operator"*)
+                    namespace=$ns
+                    SUBSYS_CASSANDRA_OPERATOR+=" $release"
+                    ;;
+                *"dynamic-gateway-service"*)
+                    namespace=$ns
+                    SUBSYS_GATEWAY+=" $release"
+                    ;;
+                *"nginx-ingress"*)
+                    namespace=$ns
+                    SUBSYS_INGRESS+=" $release"
+                    ;;
+                *) ;;
+            esac
+
+            if [[ ! -z "$namespace" ]]; then
+                ns_found=0
+                for ns in $NAMESPACE_LIST; do
+                    lc_ns=`echo "${ns}" | tr "[A-Z]" "[a-z]"`
+                    lc_namespace=`echo "${namespace}" | tr "[A-Z]" "[a-z]"`
+                    if [[ "${lc_namespace}" == "${lc_ns}" ]]; then
+                        ns_found=1
+                        break
+                    fi
+                done
+                if [[ $ns_found -eq 0 ]]; then
+                    NAMESPACE_LIST+=" $namespace"
+                fi
+            fi
+
+            helm get values --all $release 1>"${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out" 2>/dev/null
+            [ $? -eq 0 ] || rm -f "${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out"
+
+            #grab history
+            helm history $release --col-width 5000 &> "${HELM_HISTORY_DATA}/${release}_${chart}.out"
+            [ $? -eq 0 ] || rm -f "${HELM_HISTORY_DATA}/${release}_${chart}.out"
+
+            #grab release data
+            helm get $release &> "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
+            [ $? -eq 0 ] || rm -f "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
+        fi
+    done <<< "$OUTPUT"
+else
+    rm -fr $HELM_DATA
+
+    for tns in $NAMESPACE_LIST; do
+        if [[ "$tns" != *"kube"* && "$tns" != *"rook"* ]]; then
+            pod_list=`kubectl get pods -n $tns 2>/dev/null | awk '{print $1}'`
+
+            while read pod; do
+                release=`echo "${pod}" | awk -F'-' '{print $1}'`
+
+                case $pod in
+                    *"apim-v2"*) 
+                        SUBSYS_MANAGER+=" ${release}"
+                        ;;
+                    *"analytics"*)
+                        [ "${pod}" != *"proxy"* ] || SUBSYS_ANALYTICS+=" ${release}"
+                        ;;
+                    *"portal"*)
+                        SUBSYS_PORTAL+=" ${release}"
+                        ;;
+                    *"cassandra"*)
+                        SUBSYS_CASSANDRA_OPERATOR+=" ${release}"
+                        ;;
+                    *"gateway"*|*"datapower"*)
+                        SUBSYS_GATEWAY+=" ${release}"
+                        ;;
+                    *) ;;
+                esac
+            done <<< "$pod_list"
+        fi
+    done
+fi
 
 #if still blank then mark subsystem as does not exist
 [[ ! -z "$SUBSYS_ANALYTICS" ]] || SUBSYS_ANALYTICS="ISNOTSET"
 [[ ! -z "$SUBSYS_MANAGER" ]] || SUBSYS_MANAGER="ISNOTSET"
 [[ ! -z "$SUBSYS_PORTAL" ]] || SUBSYS_PORTAL="ISNOTSET"
 [[ ! -z "$SUBSYS_CASSANDRA_OPERATOR" ]] || SUBSYS_CASSANDRA_OPERATOR="ISNOTSET"
-[[ ! -z "$SUBSYS_ANALYTICS" ]] || SUBSYS_GATEWAY="ISNOTSET"
+[[ ! -z "$SUBSYS_GATEWAY" ]] || SUBSYS_GATEWAY="ISNOTSET"
 if [[ -z "$SUBSYS_INGRESS" ]]; then
     SUBSYS_INGRESS="ISNOTSET"
 
     #check all namespaces "ingress-nginx" controller if variable SUBSYS_INGRESS not set (meaning not deployed via helm)
-    OUTPUT=`kubectl get namespaces 2>null`
+    OUTPUT=`kubectl get namespaces 2>/dev/null`
     if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
         while read line; do
             namespace=`echo "$line" | cut -d' ' -f1`
-            kubectl get pods -n $namespace | grep -q "ingress-nginx"
+            kubectl get pods -n $namespace 2>/dev/null | grep -q "ingress-nginx"
             if [[ $? -eq 0 ]]; then
                 NAMESPACE_LIST+=" $namespace"
                 break
@@ -392,6 +527,8 @@ K8S_CLUSTER_PV_DESCRIBE_DATA="${K8S_CLUSTER_PV_DATA}/describe"
 K8S_CLUSTER_STORAGECLASS_DATA="${K8S_CLUSTER}/storageclasses"
 K8S_CLUSTER_STORAGECLASS_DESCRIBE_DATA="${K8S_CLUSTER_STORAGECLASS_DATA}/describe"
 
+K8S_CLUSTER_PERFORMANCE="${K8S_CLUSTER}/performance"
+
 
 mkdir -p $K8S_VERSION
 
@@ -402,6 +539,8 @@ mkdir -p $K8S_CLUSTER_ROLEBINDING_DATA
 
 mkdir -p $K8S_CLUSTER_PV_DESCRIBE_DATA
 mkdir -p $K8S_CLUSTER_STORAGECLASS_DESCRIBE_DATA
+
+mkdir -p $K8S_CLUSTER_PERFORMANCE
 
 #------------------------------------------------------------------------------------------------------
 
@@ -524,6 +663,41 @@ if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
     done <<< "$OUTPUT"
 fi
 
+#check etcd cluster performance
+if [[ $PERFORMANCE_CHECK -eq 1 ]]; then
+    if [[ $IS_OVA -eq 1 ]]; then
+        apic stage etcd-check-perf -l debug &> ${K8S_CLUSTER_PERFORMANCE}/etcd-performance.out # ova has special `apic stage` command that will run the etcd performance check and a defrag after
+    else
+        ETCD_POD=`kubectl get pod -n kube-system --selector component=etcd -o=jsonpath={.items[0].metadata.name} 2>/dev/null` # retrieve name of etcd pod to exec
+        # parse out etcd certs from pod describe
+        ETCD_CA_FILE=`kubectl describe pod -n kube-system ${ETCD_POD} | grep "\--trusted-ca-file" | cut -f2 -d"=" 2>/dev/null`
+        ETCD_CERT_FILE=`kubectl describe pod -n kube-system ${ETCD_POD} | grep "\--cert-file" | cut -f2 -d"=" 2>/dev/null`
+        ETCD_KEY_FILE=`kubectl describe pod -n kube-system ${ETCD_POD} | grep "\--key-file" | cut -f2 -d"=" 2>/dev/null`
+        
+        OUTPUT=`kubectl exec -n kube-system ${ETCD_POD} -- sh -c "export ETCDCTL_API=3; etcdctl member list --cacert=${ETCD_CA_FILE} --cert=${ETCD_CERT_FILE} --key=${ETCD_KEY_FILE} 2>/dev/null"`
+        
+        # parsing endpoints from etcd member list
+        ENDPOINTS=''
+        while read line; do
+            endpoint=`echo "$line" | awk '{print $5}'` # output formatting will change in etcd v3.4 so will need to update this
+            if [[ ${#ENDPOINTS} -eq 0 ]]; then
+                ENDPOINTS=$endpoint
+            else
+                ENDPOINTS="${ENDPOINTS},${endpoint}"
+            fi
+        done <<< "$OUTPUT"
+        ENDPOINTS=${ENDPOINTS%,} # strip trailing comma
+
+        # run etcd performance check
+        OUTPUT=`kubectl exec -n kube-system ${ETCD_POD} -- sh -c "export ETCDCTL_API=3; etcdctl check perf --endpoints="${ENDPOINTS}" --cacert=${ETCD_CA_FILE} --cert=${ETCD_CERT_FILE} --key=${ETCD_KEY_FILE}"`
+        echo "${OUTPUT}" > ${K8S_CLUSTER_PERFORMANCE}/etcd-performance.out
+
+        # run recommeneded `etcdctl defrag` to free up storage space
+        OUTPUT=`kubectl exec -n kube-system ${ETCD_POD} -- sh -c "export ETCDCTL_API=3; etcdctl defrag --endpoints="${ENDPOINTS}" --cacert=${ETCD_CA_FILE} --cert=${ETCD_CERT_FILE} --key=${ETCD_KEY_FILE}"`
+        echo "${OUTPUT}" > ${K8S_CLUSTER_PERFORMANCE}/etcd-defrag.out
+    fi
+fi
+
 #------------------------------------------------------------------------------------------------------
 
 #---------------------------------- collect namespace specific data -----------------------------------
@@ -545,11 +719,13 @@ for NAMESPACE in $NAMESPACE_LIST; do
     K8S_NAMESPACES_DAEMONSET_YAML_OUTPUT="${K8S_NAMESPACES_DAEMONSET_DATA}/yaml"
     K8S_NAMESPACES_DAEMONSET_DESCRIBE_DATA="${K8S_NAMESPACES_DAEMONSET_DATA}/describe"
 
+    K8S_NAMESPACES_DEPLOYMENT_DATA="${K8S_NAMESPACES_SPECIFIC}/deployments"
+    K8S_NAMESPACES_DEPLOYMENT_YAML_OUTPUT="${K8S_NAMESPACES_DEPLOYMENT_DATA}/yaml"
+    K8S_NAMESPACES_DEPLOYMENT_DESCRIBE_DATA="${K8S_NAMESPACES_DEPLOYMENT_DATA}/describe"
+
     K8S_NAMESPACES_ENDPOINT_DATA="${K8S_NAMESPACES_SPECIFIC}/endpoints"
     K8S_NAMESPACES_ENDPOINT_DESCRIBE_DATA="${K8S_NAMESPACES_ENDPOINT_DATA}/describe"
     K8S_NAMESPACES_ENDPOINT_YAML_OUTPUT="${K8S_NAMESPACES_ENDPOINT_DATA}/yaml"
-
-    K8S_NAMESPACES_INGRESS_ENDPOINT_DATA="${K8S_NAMESPACES_SPECIFIC}/ingress_endpoint_checks"
 
     K8S_NAMESPACES_JOB_DATA="${K8S_NAMESPACES_SPECIFIC}/jobs"
     K8S_NAMESPACES_JOB_DESCRIBE_DATA="${K8S_NAMESPACES_JOB_DATA}/describe"
@@ -593,10 +769,11 @@ for NAMESPACE in $NAMESPACE_LIST; do
     mkdir -p $K8S_NAMESPACES_DAEMONSET_YAML_OUTPUT
     mkdir -p $K8S_NAMESPACES_DAEMONSET_DESCRIBE_DATA
 
+    mkdir -p $K8S_NAMESPACES_DEPLOYMENT_YAML_OUTPUT
+    mkdir -p $K8S_NAMESPACES_DEPLOYMENT_DESCRIBE_DATA
+
     mkdir -p $K8S_NAMESPACES_ENDPOINT_DESCRIBE_DATA
     mkdir -p $K8S_NAMESPACES_ENDPOINT_YAML_OUTPUT
-
-    mkdir -p $K8S_NAMESPACES_INGRESS_ENDPOINT_DATA
 
     mkdir -p $K8S_NAMESPACES_JOB_DESCRIBE_DATA
 
@@ -635,6 +812,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
     OUTPUT=`kubectl get hpa -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/hpa.out"
     OUTPUT1=`kubectl get ingress -n $NAMESPACE 2>/dev/null`
+    [ $? -eq 0 ] || OUTPUT1=`kubectl get routes -n $NAMESPACE 2>/dev/null`
     if [[ $? -eq 0 && ${#OUTPUT1} -gt 0 ]]; then
         echo "$OUTPUT1" > "${K8S_NAMESPACES_LIST_DATA}/ingress.out"
 
@@ -746,6 +924,22 @@ for NAMESPACE in $NAMESPACE_LIST; do
         rm -fr $K8S_NAMESPACES_DAEMONSET_DATA
     fi
 
+    #grab deployment data
+    OUTPUT=`kubectl get deployments -n $NAMESPACE 2>/dev/null`
+    if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
+        echo "$OUTPUT" > "${K8S_NAMESPACES_DEPLOYMENT_DATA}/deployments.out"
+        while read line; do
+            deployment=`echo "$line" | cut -d' ' -f1`
+            kubectl describe deployment $deployment -n $NAMESPACE &>"${K8S_NAMESPACES_DEPLOYMENT_DESCRIBE_DATA}/${deployment}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_DEPLOYMENT_DESCRIBE_DATA}/${deployment}.out"
+
+            kubectl get deployment $deployment -o yaml -n $NAMESPACE &>"${K8S_NAMESPACES_DEPLOYMENT_DESCRIBE_DATA}/${deployment}.out"
+            [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_DEPLOYMENT_DESCRIBE_DATA}/${deployment}.out"
+        done <<< "$OUTPUT"
+    else
+        rm -fr $K8S_NAMESPACES_DEPLOYMENT_DATA
+    fi
+
     #grab endpoint data
     OUTPUT=`kubectl get endpoints -n $NAMESPACE 2>/dev/null`
     if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
@@ -776,6 +970,8 @@ for NAMESPACE in $NAMESPACE_LIST; do
     fi
 
     #grab pod data
+    NSLOOKUP_COMPLETE=0
+
     OUTPUT=`kubectl get pods -n $NAMESPACE -o wide 2>/dev/null`
     if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
         echo "$OUTPUT" > "${K8S_NAMESPACES_POD_DATA}/pods.out"
@@ -790,6 +986,8 @@ for NAMESPACE in $NAMESPACE_LIST; do
             IS_GATEWAY=0
             IS_PORTAL=0
             IS_ANALYTICS=0
+
+            CHECK_INGRESS=0
 
             case $NAMESPACE in
                 "kube-system")
@@ -812,13 +1010,15 @@ for NAMESPACE in $NAMESPACE_LIST; do
                     DESCRIBE_TARGET_PATH="${K8S_NAMESPACES_POD_DESCRIBE_DATA}"
                     LOG_TARGET_PATH="${K8S_NAMESPACES_POD_LOG_DATA}";;
                 *)
+                    CHECK_INGRESS=1
+
                     if [[ "$SUBSYS_ANALYTICS" == *"$pod_helm_release"* ]]; then
                         SUBFOLDER="analytics"
                         IS_ANALYTICS=1
                     elif [[ "$SUBSYS_GATEWAY" == *"$pod_helm_release"* ]]; then
                         SUBFOLDER="gateway"
                         IS_GATEWAY=1
-                    elif [[ "$SUBSYS_INGRESS" == *"$pod_helm_release"* || "${pod}" == *"ingress-nginx"* ]]; then
+                    elif [[ "$SUBSYS_INGRESS" == *"$pod_helm_release"* ]]; then
                         IS_INGRESS=1
                         SUBFOLDER="ingress"
                     elif [[ "$SUBSYS_MANAGER" == *"$pod_helm_release"* ]]; then
@@ -844,6 +1044,34 @@ for NAMESPACE in $NAMESPACE_LIST; do
                 mkdir -p $LOG_TARGET_PATH
             fi
 
+            if [[ $NSLOOKUP_COMPLETE -eq 0 && $CHECK_INGRESS -eq 1 ]]; then
+                if [[ ( "${pod}" == *"apim-v2"* ) || ( "${pod}" == *"analytics-client"* ) || ( "${pod}" == *"-apic-portal-www"* ) ]]; then
+                    PERFORM_NSLOOKUP=1
+                fi
+                
+                if [[ $PERFORM_NSLOOKUP -eq 1 ]]; then
+                    #grab ingress or routes
+                    ingress_list=`kubectl get ingress -n $NAMESPACE 2>/dev/null`
+                    [ $? -eq 0 ] || ingress_list=`kubectl get routes -n $NAMESPACE 2>/dev/null`
+
+                    ingress_list=`echo "${ingress_list}" | grep -v NAME | awk '{print $2}' | uniq`
+                    at_start=1
+                    while read ingress; do
+                        nslookup_output=`kubectl exec -n $NAMESPACE $pod -- nslookup $ingress 2>&1`
+                        if [[ $at_start -eq 1 ]]; then
+                            echo -e "${nslookup_output}" > "${K8S_NAMESPACES_LIST_DATA}/ingress-checks.out"
+                        else
+                            echo -e "\n\n===============\n\n${nslookup_output}" >> "${K8S_NAMESPACES_LIST_DATA}/ingress-checks.out"
+                        fi
+                        at_start=0
+                    done <<< "$ingress_list"
+
+                    NSLOOKUP_COMPLETE=1
+                fi
+
+                PERFORM_NSLOOKUP=0
+            fi
+
             #grab ingress configuration
             if [[ $IS_INGRESS -eq 1 ]]; then
                 kubectl cp -n $NAMESPACE "${pod}:/etc/nginx/nginx.conf" "${LOG_TARGET_PATH}/${pod}_nginx-ingress-configuration.out" &>/dev/null
@@ -855,7 +1083,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
             #grab gateway diagnostic data
             if [[ $DIAG_GATEWAY -eq 1 && $IS_GATEWAY -eq 1 && "$ready" == "1/1" && "$status" == "Running" && "$pod" == *"dynamic-gateway-service"* ]]; then
-                GATEWAY_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/gateway/${node}"
+                GATEWAY_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/gateway/${pod}"
                 mkdir -p $GATEWAY_DIAGNOSTIC_DATA
 
                 #grab gwd-log.log

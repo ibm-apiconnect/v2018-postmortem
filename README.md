@@ -1,8 +1,10 @@
 # v2018-postmortem-tool
 
+## Notes
+- For usage information with the tool, use the command `./generate_postmortem.sh --help`
 
-## Instructions
-### OVA deployment:
+## Deployment Instructions
+### OVA
 1. Connect to the target appliance via SSH then switch to the _root user_ using the following commands:
 ```shell
 ssh {ova appliance hostname} -l apicadm
@@ -15,7 +17,7 @@ curl -s -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconne
 3.  Add execution permissions to file using the command `chmod +x generate_postmortem.sh`.
 4.  Run the tool using the command `./generate_postmortem.sh --ova`.
 
-### Kubernetes deployment:
+### Kubernetes / OpenShift
 ------
 #### Prerequisites
 Place script and run from the _apicup project_ directory  
@@ -25,25 +27,20 @@ set the environment variable **APICUP_PROJECT_PATH** using the following command
 export APICUP_PROJECT_PATH="/path/to/directory"
 ```
 ------
-1.  Make sure the **kubectl** command is installed.
-2.  Make sure the **kubectl** is configured to the Kubernetes cluster.  See following commands to complete this task.
-```shell
-rm -fr $HOME/.kube
-mkdir -p $HOME/.kube
-scp root@{kubernetes_master_host}:/etc/kubernetes/admin.conf $HOME/.kube/config
-```
-3.  Make sure the **helm** command is installed, compatibile and connected to the Kubernetes cluster.  See the following commands to complete this task.
-```shell
-rm -fr $HOME/.helm
-curl -s https://raw.githubusercontent.com/helm/helm/master/scripts/get | bash -s -- --version v2.8.2
-helm init --client-only
-```
-4.  Download the script to the _apicup project_ directory using the following command:
+1.  Download the script to the _apicup project_ directory using the following command:
 ```shell
 curl -s -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconnect/v2018-postmortem/master/generate_postmortem.sh
 ```
-5.  Add execution permissions to file using the command `chmod +x generate_postmortem.sh`.
-6.  Run the tool using the command `./generate_postmortem.sh` from the _apicup project_ directory.
+2.  Add execution permissions to file using the command `chmod +x generate_postmortem.sh`.
+3.  Run the tool using the command `./generate_postmortem.sh` from the _apicup project_ directory.
+
+### Cloud Pak 4i
+1.  Download the script to the _apicup project_ directory using the following command:
+```shell
+curl -s -o generate_postmortem.sh https://raw.githubusercontent.com/ibm-apiconnect/v2018-postmortem/master/generate_postmortem.sh
+```
+2.  Add execution permissions to file using the command `chmod +x generate_postmortem.sh`.
+3.  Run the tool using the command `./generate_postmortem.sh --cp4i` from the _apicup project_ directory.
 
 
 ## Working a specific subystem issue?
