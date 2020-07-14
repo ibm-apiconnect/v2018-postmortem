@@ -19,7 +19,6 @@ for switch in $@; do
             echo -e "--extra-namespaces:      Extra namespaces separated with commas.  Example:  --extra-namespaces=dev1,dev2,dev3"
             echo -e "--log-limit:             Set the number of lines to collect from each pod logs."
             echo -e "--ova:                   Only set if running inside an OVA deployment."
-            echo -e "--no-prompt:             Do not prompt to report auto-detected namespaces."
             echo -e "--pull-appliance-logs:   Call [apic logs] command then package into archive file."
             echo -e "--performance-check:     Set to run performance checks."
             echo -e "--no-history:            Do not collect user history."
@@ -150,7 +149,7 @@ cat << EOF > $1
 <!--  ErrorReport Request -->
 <env:Envelope xmlns:env="http://schemas.xmlsoap.org/soap/envelope/">
   <env:Body>
-    <dp:request xmlns:dp="http://www.datapower.com/schemas/management" domain="apiconnect">
+    <dp:request xmlns:dp="http://www.datapower.com/schemas/management" domain="default">
       <dp:do-action>
         <ErrorReport/>
       </dp:do-action>
