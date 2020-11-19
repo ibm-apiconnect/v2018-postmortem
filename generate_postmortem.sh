@@ -319,9 +319,15 @@ if [[ $IS_OVA -eq 1 ]]; then
         cp "/root/.bash_history" "${OVA_DATA}/root-bash_history.out" &>/dev/null
     fi
 
+    #pull appliance logs
     if [[ $PULL_APPLIANCE_LOGS -eq 1 ]]; then
         cd $OVA_DATA
         sudo apic logs &>/dev/null
+    fi
+
+    #check disk performance
+    if [[ $PERFORMANCE_CHECK -eq 1 ]]; then
+        hdparm -Tt /dev/sda 1>"${OVA_DATA}/hdparm.out" 2>/dev/null  
     fi
 fi
 #=================================================================================================================
