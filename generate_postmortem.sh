@@ -67,13 +67,13 @@ for switch in $@; do
         "--diagnostic-analytics")
             DIAG_ANALYTICS=1
             ;;
-        "--log-limit")
+        "--log-limit"*)
             limit=`echo "${switch}" | cut -d'=' -f2`
             if [[ "$limit" =~ ^[0-9]+$ ]]; then
                 LOG_LIMIT="--tail=${limit}"
             fi
             ;;
-        "--extra-namespaces")
+        "--extra-namespaces"*)
             extra_namespaces=`echo "${switch}" | cut -d'=' -f2 | tr ',' ' '`
             NAMESPACE_LIST="kube-system ${extra_namespaces}"
             ;;
