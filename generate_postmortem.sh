@@ -17,6 +17,7 @@ for switch in $@; do
             echo -e "Available switches:"
             echo -e "--cp4i                   Specify if API Connect is deployed in a CloudPak 4i environment."
             echo -e "--extra-namespaces:      Extra namespaces separated with commas.  Example:  --extra-namespaces=dev1,dev2,dev3"
+            echo -e "--filter-namespaces:     Filter helm installations on namespaces matching this string.  Example:  --filter-namespaces=utst"
             echo -e "--log-limit:             Set the number of lines to collect from each pod logs."
             echo -e "--ova:                   Only set if running inside an OVA deployment."
             echo -e "--pull-appliance-logs:   Call [apic logs] command then package into archive file."
@@ -77,6 +78,9 @@ for switch in $@; do
             extra_namespaces=`echo "${switch}" | cut -d'=' -f2 | tr ',' ' '`
             NAMESPACE_LIST="kube-system ${extra_namespaces}"
             ;;
+        "--filter-namespaces"*)
+            filter_namespaces=`echo "${switch}" | cut -d'=' -f2`
+            ;;
         "--pull-appliance-logs")
             PULL_APPLIANCE_LOGS=1
             ;;
@@ -87,6 +91,7 @@ for switch in $@; do
             NO_HISTORY=1
             ;;
         *)
+            echo "got: ${switch}"
             if [[ -z "$DEBUG_SET" ]]; then
                 set +e
             fi
@@ -356,7 +361,12 @@ SUBSYS_GATEWAY=""
 SUBSYS_INGRESS=""
 
 if [[ $CP4I -ne 1 ]]; then
-    OUTPUT=`helm ls -a 2>/dev/null`
+    if [ -v filter_namespaces ] ; then
+      echo "Filtering namepace list on ${filter_namespaces}."
+      OUTPUT=`helm ls -a 2>/dev/null | grep ${filter_namespaces}`
+    else
+      OUTPUT=`helm ls -a 2>/dev/null`
+    fi
 
     if [[ ${#OUTPUT} -eq 0 ]]; then
         warning1="WARNING!  Helm is not reporting any deployments, this indicates there is problem communicating with the [tiller] pod."
@@ -402,7 +412,7 @@ if [[ $CP4I -ne 1 ]]; then
             namespace=""
 
             case $chart in
-                *"apic-analytics"*) 
+                *"apic-analytics"*)
                     namespace=$ns
                     SUBSYS_ANALYTICS+=" $release"
                     ;;
@@ -467,7 +477,7 @@ else
                 release=`echo "${pod}" | awk -F'-' '{print $1}'`
 
                 case $pod in
-                    *"apim-v2"*) 
+                    *"apim-v2"*)
                         SUBSYS_MANAGER+=" ${release}"
                         ;;
                     *"analytics"*)
@@ -600,8 +610,8 @@ if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
                 echo -e "${warning1}${name}${warning2}" >> "${K8S_DATA}/warnings.out"
             fi
         fi
-        
-        
+
+
     done <<< "$OUTPUT"
 
     if [[ $OUTPUT_METRICS -eq 0 ]]; then
@@ -675,9 +685,9 @@ if [[ $PERFORMANCE_CHECK -eq 1 ]]; then
         ETCD_CA_FILE=`kubectl describe pod -n kube-system ${ETCD_POD} | grep "\--trusted-ca-file" | cut -f2 -d"=" 2>/dev/null`
         ETCD_CERT_FILE=`kubectl describe pod -n kube-system ${ETCD_POD} | grep "\--cert-file" | cut -f2 -d"=" 2>/dev/null`
         ETCD_KEY_FILE=`kubectl describe pod -n kube-system ${ETCD_POD} | grep "\--key-file" | cut -f2 -d"=" 2>/dev/null`
-        
+
         OUTPUT=`kubectl exec -n kube-system ${ETCD_POD} -- sh -c "export ETCDCTL_API=3; etcdctl member list --cacert=${ETCD_CA_FILE} --cert=${ETCD_CERT_FILE} --key=${ETCD_KEY_FILE} 2>/dev/null"`
-        
+
         # parsing endpoints from etcd member list
         ENDPOINTS=''
         while read line; do
@@ -730,7 +740,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
     K8S_NAMESPACES_JOB_DATA="${K8S_NAMESPACES_SPECIFIC}/jobs"
     K8S_NAMESPACES_JOB_DESCRIBE_DATA="${K8S_NAMESPACES_JOB_DATA}/describe"
-    
+
     K8S_NAMESPACES_POD_DATA="${K8S_NAMESPACES_SPECIFIC}/pods"
     K8S_NAMESPACES_POD_DESCRIBE_DATA="${K8S_NAMESPACES_POD_DATA}/describe"
     K8S_NAMESPACES_POD_DIAGNOSTIC_DATA="${K8S_NAMESPACES_POD_DATA}/diagnostic"
@@ -798,7 +808,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
     mkdir -p $K8S_NAMESPACES_STS_DESCRIBE_DATA
 
     if [[ $DIAG_MANAGER -eq 1 ]]; then
-        mkdir -p "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager" 
+        mkdir -p "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager"
     fi
 
     #for icp4i platform, grab equivalent "apiconnect-up.yml"
@@ -870,7 +880,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
                     DOWNLOAD_RESULT=`curl --write-out %{http_code} -s -o ${file_path} https://raw.githubusercontent.com/ibm-apiconnect/v2018-postmortem/master/identifyServicesState.js`
                 else
                     DOWNLOAD_RESULT=200
-                fi 
+                fi
                 if [[ $DOWNLOAD_RESULT -eq 200 ]]; then
                     cat "${file_path}" | kubectl exec -n $NAMESPACE -it $pod -- node &>"${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager/${pod}-identifyServicesState.out"
                     [ $? -eq 0 ] || rm -fr "${K8S_NAMESPACES_POD_DIAGNOSTIC_DATA}/manager/${pod}-identifyServicesState.out"
@@ -1001,7 +1011,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
                         *"calico"*|*"flannel"*) SUBFOLDER="networking";;
                         *"coredns"*) SUBFOLDER="coredns";;
                         *"etcd"*) SUBFOLDER="etcd";;
-                        *"ingress"*) 
+                        *"ingress"*)
                             IS_INGRESS=1
                             SUBFOLDER="ingress"
                             ;;
@@ -1041,7 +1051,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
                     DESCRIBE_TARGET_PATH="${K8S_NAMESPACES_POD_DESCRIBE_DATA}/${SUBFOLDER}"
                     LOG_TARGET_PATH="${K8S_NAMESPACES_POD_LOG_DATA}/${SUBFOLDER}";;
             esac
-            
+
             #make sure directories exist
             if [[ ! -d "$DESCRIBE_TARGET_PATH" ]]; then
                 mkdir -p $DESCRIBE_TARGET_PATH
@@ -1054,7 +1064,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
                 if [[ ( "${pod}" == *"apim-v2"* ) || ( "${pod}" == *"analytics-client"* ) || ( "${pod}" == *"-apic-portal-www"* ) ]]; then
                     PERFORM_NSLOOKUP=1
                 fi
-                
+
                 if [[ $PERFORM_NSLOOKUP -eq 1 ]]; then
                     #grab ingress or routes
                     ingress_list=`kubectl get ingress -n $NAMESPACE 2>/dev/null`
@@ -1114,7 +1124,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
                 #only proceed with error report if response status code is 200
                 if [[ $response -eq 200 ]]; then
-                    
+
                     #pull error report
                     echo -e "Pausing for error report to generate..."
                     sleep $ERROR_REPORT_SLEEP_TIMEOUT
@@ -1233,7 +1243,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
                             "db")
                                 mkdir -p $PORTAL_DIAGNOSTIC_DATA
                                 OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "mysqldump portal" 2>"/dev/null"`
-                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/portal.dump" 
+                                echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/portal.dump"
                                 OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "ls -lRAi --author --full-time" 2>"/dev/null"`
                                 echo "$OUTPUT1" >"${PORTAL_DIAGNOSTIC_DATA}/listing-all.out"
                                 OUTPUT1=`kubectl exec -n $NAMESPACE -c $container $pod -- bash -ic "ps -efHww --sort=-pcpu" 2>"/dev/null"`
@@ -1313,7 +1323,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
     else
         rm -fr $K8S_NAMESPACES_ROLEBINDING_DATA
     fi
-    
+
     #grab role service account data
     OUTPUT=`kubectl get sa -n $NAMESPACE 2>/dev/null`
     if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
@@ -1333,7 +1343,7 @@ for NAMESPACE in $NAMESPACE_LIST; do
         echo "$OUTPUT" > "${K8S_NAMESPACES_SERVICE_DATA}/services.out"
         while read line; do
             svc=`echo "$line" | cut -d' ' -f1`
-            
+
             kubectl describe svc $svc -n $NAMESPACE &>"${K8S_NAMESPACES_SERVICE_DESCRIBE_DATA}/${svc}.out"
             [ $? -eq 0 ] || rm -f "${K8S_NAMESPACES_SERVICE_DESCRIBE_DATA}/${svc}.out"
 
