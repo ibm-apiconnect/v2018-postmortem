@@ -15,7 +15,9 @@ for switch in $@; do
             echo -e 'Usage: generate_postmortem.sh {optional: LOG LIMIT}'
             echo -e ""
             echo -e "Available switches:"
+            echo -e "--no-apicup:             Use when the apicup project directory is not available."
             echo -e "--cp4i                   Specify if API Connect is deployed in a CloudPak 4i environment."
+            echo -e "--specific-namespaces:   Target only the listed namespaces for the data collection."
             echo -e "--extra-namespaces:      Extra namespaces separated with commas.  Example:  --extra-namespaces=dev1,dev2,dev3"
             echo -e "--log-limit:             Set the number of lines to collect from each pod logs."
             echo -e "--ova:                   Only set if running inside an OVA deployment."
@@ -46,6 +48,10 @@ for switch in $@; do
             NO_APICUP=1
             ;;
         "--ova")
+            if [[ $EUID -ne 0 ]]; then
+                echo "This script must be run as root" 
+                exit 1
+            fi
             NO_APICUP=1
             IS_OVA=1
             ;;
@@ -72,6 +78,11 @@ for switch in $@; do
             if [[ "$limit" =~ ^[0-9]+$ ]]; then
                 LOG_LIMIT="--tail=${limit}"
             fi
+            ;;
+        *"--specific-namespaces"*)
+            SPECIFIC_NAMESPACES=1
+            specific_namespaces=`echo "${switch}" | cut -d'=' -f2 | tr ',' ' '`
+            NAMESPACE_LIST="${specific_namespaces}"
             ;;
         "--extra-namespaces"*)
             extra_namespaces=`echo "${switch}" | cut -d'=' -f2 | tr ',' ' '`
@@ -216,7 +227,7 @@ ARCHIVE_FILE=""
 
 ERROR_REPORT_SLEEP_TIMEOUT=30
 
-MIN_DOCKER_VERSION="17.03"
+MIN_CONTAINER_VERSION="17.03"
 MIN_KUBELET_VERSION="1.10"
 
 COLOR_YELLOW=`tput setaf 3`
@@ -243,12 +254,12 @@ kubectl get pods --all-namespaces | grep -q "metrics-server"
 OUTPUT_METRICS=$?
 
 kubectl get ns 2> /dev/null | grep -q "rook-ceph"
-if [[ $? -eq 0 ]]; then
+if [[ $? -eq 0 && $SPECIFIC_NAMESPACES -ne 1 ]]; then
     NAMESPACE_LIST+=" rook-ceph"
 fi
 
 kubectl get ns 2> /dev/null | grep -q "rook-ceph-system"
-if [[ $? -eq 0 ]]; then
+if [[ $? -eq 0 && $SPECIFIC_NAMESPACES -ne 1 ]]; then
     NAMESPACE_LIST+=" rook-ceph-system"
 fi
 
@@ -319,6 +330,11 @@ if [[ $IS_OVA -eq 1 ]]; then
         cp "/root/.bash_history" "${OVA_DATA}/root-bash_history.out" &>/dev/null
     fi
 
+    #grab ntp data
+    systemctl status systemd-timesyncd 1>"${OVA_DATA}/ntp.out" 2>/dev/null
+    echo -e "\n\n" >>"${OVA_DATA}/ntp.out"
+    timedatectl status 1>>"${OVA_DATA}/ntp.out" 2>/dev/null
+
     #pull appliance logs
     if [[ $PULL_APPLIANCE_LOGS -eq 1 ]]; then
         cd $OVA_DATA
@@ -346,6 +362,10 @@ mkdir -p $HELM_RELEASE_DATA
 
 #grab version
 helm version > "${HELM_DATA}/helm.version"
+if [[ $? -ne 0 && $CP4I -ne 1 ]]; then
+    echo -e "Error with [helm] package, exiting..."
+    exit 1
+fi
 
 #initialize variables
 SUBSYS_ANALYTICS=""
@@ -356,8 +376,15 @@ SUBSYS_GATEWAY=""
 SUBSYS_INGRESS=""
 
 if [[ $CP4I -ne 1 ]]; then
-    OUTPUT=`helm ls -a 2>/dev/null`
-
+    helm version --client --short 2>/dev/null | egrep -q "^v3"
+    if [[ $? -eq 0 ]]; then
+        HELM_VERSION=3
+        OUTPUT=`helm ls -a -A 2>/dev/null`
+    else
+        HELM_VERSION=2
+        OUTPUT=`helm ls -a 2>/dev/null`
+    fi
+    
     if [[ ${#OUTPUT} -eq 0 ]]; then
         warning1="WARNING!  Helm is not reporting any deployments, this indicates there is problem communicating with the [tiller] pod."
         warning2="\nWithout deployment data, this tool cannot proceed.\n"
@@ -398,7 +425,15 @@ if [[ $CP4I -ne 1 ]]; then
         if [[ "$line" != *"NAME"* ]]; then
             release=`echo "$line" | awk -F ' ' '{print $1}'`
             chart=`echo "$line" | awk -F ' ' '{print $9}'`
-            ns=`echo "$line" | awk -F ' ' '{print $(NF -0)}'`
+            if [[ $HELM_VERSION -eq 2 ]]; then
+                ns=`echo "$line" | awk -F ' ' '{print $(NF -0)}'`
+                HELMV2ADD="--col-width 5000"
+                HELMV3ADD=""
+            else
+                ns=`echo "$line" | awk -F ' ' '{print $2}'`
+                HELMV2ADD=""
+                HELMV3ADD="-n ${ns}"
+            fi
             namespace=""
 
             case $chart in
@@ -439,21 +474,36 @@ if [[ $CP4I -ne 1 ]]; then
                         break
                     fi
                 done
-                if [[ $ns_found -eq 0 ]]; then
+                if [[ $ns_found -eq 0 && $SPECIFIC_NAMESPACES -ne 1 ]]; then
                     NAMESPACE_LIST+=" $namespace"
                 fi
             fi
 
-            helm get values --all $release 1>"${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out" 2>/dev/null
-            [ $? -eq 0 ] || rm -f "${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out"
+            if [[ $HELM_VERSION -eq 2 ]]; then
+                #grab values
+                helm get values --all $release 1>"${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out" 2>/dev/null
+                [ $? -eq 0 ] || rm -f "${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out"
 
-            #grab history
-            helm history $release --col-width 5000 &> "${HELM_HISTORY_DATA}/${release}_${chart}.out"
-            [ $? -eq 0 ] || rm -f "${HELM_HISTORY_DATA}/${release}_${chart}.out"
+                #grab history
+                helm history $release --col-width 5000 &> "${HELM_HISTORY_DATA}/${release}_${chart}.out"
+                [ $? -eq 0 ] || rm -f "${HELM_HISTORY_DATA}/${release}_${chart}.out"
 
-            #grab release data
-            helm get $release &> "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
-            [ $? -eq 0 ] || rm -f "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
+                #grab release data
+                helm get $release &> "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
+                [ $? -eq 0 ] || rm -f "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
+            else
+                #grab values
+                helm get values --all $release -n $ns 1>"${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out" 2>/dev/null
+                [ $? -eq 0 ] || rm -f "${HELM_DEPLOYMENT_DATA}/${release}_${chart}-values.out"
+
+                #grab history
+                helm history $release -n $ns &> "${HELM_HISTORY_DATA}/${release}_${chart}.out"
+                [ $? -eq 0 ] || rm -f "${HELM_HISTORY_DATA}/${release}_${chart}.out"
+
+                #grab release data
+                helm get all $release -n $ns &> "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
+                [ $? -eq 0 ] || rm -f "${HELM_RELEASE_DATA}/${release}_${chart}.yaml"
+            fi
         fi
     done <<< "$OUTPUT"
 else
@@ -504,7 +554,7 @@ if [[ -z "$SUBSYS_INGRESS" ]]; then
         while read line; do
             namespace=`echo "$line" | cut -d' ' -f1`
             kubectl get pods -n $namespace 2>/dev/null | grep -q "ingress-nginx"
-            if [[ $? -eq 0 ]]; then
+            if [[ $? -eq 0 && $SPECIFIC_NAMESPACES -ne 1 ]]; then
                 NAMESPACE_LIST+=" $namespace"
                 break
             fi
@@ -578,16 +628,16 @@ if [[ $? -eq 0 && ${#OUTPUT} -gt 0 ]]; then
                 fi
             fi
 
-            #check the docker / kubelet versions
-            docker_version=`echo "$describe_stdout" | grep -i "Container Runtime Version" | awk -F'//' '{print $2}'`
+            #check the container / kubelet versions
+            container_version=`echo "$describe_stdout" | grep -i "Container Runtime Version" | awk -F'//' '{print $2}'`
             kubelet_version=`echo "$describe_stdout" | grep "Kubelet Version:" | awk -F' ' '{print $NF}' | awk -F'v' '{print $2}'`
 
-            echo "$docker_version" >"${K8S_VERSION}/docker-${name}.version"
+            echo "$container_version" >"${K8S_VERSION}/container-${name}.version"
 
-            version_gte $docker_version $MIN_DOCKER_VERSION
+            version_gte $container_version $MIN_CONTAINER_VERSION
             if [[ $? -ne 0 ]]; then
                 warning1="WARNING!  Node "
-                warning2=" docker version [$docker_version] less than minimum [$MIN_DOCKER_VERSION]."
+                warning2=" container version [$container_version] less than minimum [$MIN_CONTAINER_VERSION]."
                 echo -e "${COLOR_YELLOW}${warning1}${COLOR_WHITE}$name${COLOR_YELLOW}${warning2}${COLOR_RESET}"
                 echo -e "${warning1}${name}${warning2}" >> "${K8S_DATA}/warnings.out"
             fi
@@ -813,11 +863,13 @@ for NAMESPACE in $NAMESPACE_LIST; do
     OUTPUT=`kubectl get hpa -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/hpa.out"
     OUTPUT1=`kubectl get ingress -n $NAMESPACE 2>/dev/null`
-    if [[ $? -eq 0 ]]; then
+    if [[ ${#OUTPUT1} -gt 0 ]]; then
         outfile="ingress.out"
+        IS_OCP=0
     else
         OUTPUT1=`kubectl get routes -n $NAMESPACE 2>/dev/null`
         outfile="routes.out"
+        IS_OCP=1
     fi
     if [[ $? -eq 0 && ${#OUTPUT1} -gt 0 ]]; then
         echo "$OUTPUT1" > "${K8S_NAMESPACES_LIST_DATA}/${outfile}"
@@ -828,7 +880,11 @@ for NAMESPACE in $NAMESPACE_LIST; do
 
             while read line; do
                 ingress=`echo "$line" | awk -F' ' '{print $1}'`
-                endpoint=`echo "$line" | awk -F' ' '{print $2}'`
+                if [[ $IS_OCP -eq 0 ]]; then
+                    endpoint=`echo "$line" | awk -F' ' '{print $3}'`
+                else
+                    endpoint=`echo "$line" | awk -F' ' '{print $2}'`
+                fi
 
                 if [[ "$ingress" != "NAME" ]]; then
                     OUTPUT2=`kubectl exec -n $PORTAL_NAMESPACE -c admin $PORTAL_PODNAME -- nslookup $endpoint`
@@ -1048,34 +1104,6 @@ for NAMESPACE in $NAMESPACE_LIST; do
             fi
             if [[ ! -d "$LOG_TARGET_PATH" ]]; then
                 mkdir -p $LOG_TARGET_PATH
-            fi
-
-            if [[ $NSLOOKUP_COMPLETE -eq 0 && $CHECK_INGRESS -eq 1 ]]; then
-                if [[ ( "${pod}" == *"apim-v2"* ) || ( "${pod}" == *"analytics-client"* ) || ( "${pod}" == *"-apic-portal-www"* ) ]]; then
-                    PERFORM_NSLOOKUP=1
-                fi
-                
-                if [[ $PERFORM_NSLOOKUP -eq 1 ]]; then
-                    #grab ingress or routes
-                    ingress_list=`kubectl get ingress -n $NAMESPACE 2>/dev/null`
-                    [ $? -eq 0 ] || ingress_list=`kubectl get routes -n $NAMESPACE 2>/dev/null`
-
-                    ingress_list=`echo "${ingress_list}" | grep -v NAME | awk '{print $2}' | uniq`
-                    at_start=1
-                    while read ingress; do
-                        nslookup_output=`kubectl exec -n $NAMESPACE $pod -- nslookup $ingress 2>&1`
-                        if [[ $at_start -eq 1 ]]; then
-                            echo -e "${nslookup_output}" > "${K8S_NAMESPACES_LIST_DATA}/ingress-checks.out"
-                        else
-                            echo -e "\n\n===============\n\n${nslookup_output}" >> "${K8S_NAMESPACES_LIST_DATA}/ingress-checks.out"
-                        fi
-                        at_start=0
-                    done <<< "$ingress_list"
-
-                    NSLOOKUP_COMPLETE=1
-                fi
-
-                PERFORM_NSLOOKUP=0
             fi
 
             #grab ingress configuration
