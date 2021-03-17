@@ -109,6 +109,10 @@ if [[ -z "$LOG_LIMIT" ]]; then
     LOG_LIMIT=""
 fi
 
+if [[ -z "$SPECIFIC_NAMESPACES" ]]; then
+    SPECIFIC_NAMESPACES=0
+fi
+
 #====================================== Confirm pre-reqs and init variables ======================================
 #----------------------------------------- Validate everything ----------------------------------------
 if [[ -z "$NO_APICUP" ]]; then
