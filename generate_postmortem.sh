@@ -284,17 +284,6 @@ if [[ -z "$NO_APICUP" ]]; then
     #grab version
     apicup version --semver > "${APICUP_DATA}/apicup.version"
 
-    #check if portal pods are available to use nslookup
-    kubectl get pods --all-namespaces | grep -q "apic-portal-www"
-    if [[ $? -eq 0 ]]; then
-        OUTPUT1=`kubectl get pods --all-namespaces | grep "apic-portal-www"`
-        while read line1; do
-            PORTAL_NAMESPACE=`echo "${line1}" | awk -F' ' '{print $1}'`
-            PORTAL_PODNAME=`echo "${line1}" | awk -F' ' '{print $2}'`
-            break
-        done <<< "$OUTPUT1"
-    fi
-
     #loop through subsystems
     OUTPUT1=`apicup subsys list 2>/dev/null | cut -d' ' -f1`
     while read line1; do
@@ -866,35 +855,57 @@ for NAMESPACE in $NAMESPACE_LIST; do
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/secrets.out"
     OUTPUT=`kubectl get hpa -n $NAMESPACE 2>/dev/null`
     [[ $? -ne 0 || ${#OUTPUT} -eq 0 ]] ||  echo "$OUTPUT" > "${K8S_NAMESPACES_LIST_DATA}/hpa.out"
+
+    #grab ingress/routes then check each
     OUTPUT1=`kubectl get ingress -n $NAMESPACE 2>/dev/null`
     if [[ ${#OUTPUT1} -gt 0 ]]; then
-        outfile="ingress.out"
+        ir_outfile="ingress.out"
+        ir_checks_outfile="ingress-checks.out"
         IS_OCP=0
     else
         OUTPUT1=`kubectl get routes -n $NAMESPACE 2>/dev/null`
-        outfile="routes.out"
+        ir_outfile="routes.out"
+        ir_checks_outfile="routes-checks.out"
         IS_OCP=1
     fi
-    if [[ $? -eq 0 && ${#OUTPUT1} -gt 0 ]]; then
-        echo "$OUTPUT1" > "${K8S_NAMESPACES_LIST_DATA}/${outfile}"
 
-        #check each endpoint using nslookup
-        if [[ ! -z "$PORTAL_NAMESPACE" && ! -z "$PORTAL_PODNAME" ]]; then
-            echo -e  "\n\n----- Test for ingress endpoint DNS connectivity -----" >> "${K8S_NAMESPACES_LIST_DATA}/${outfile}"
+    IR_OUTFILE="${K8S_NAMESPACES_LIST_DATA}/${ir_outfile}"
+    IR_CHECKS_OUTFILE="${K8S_NAMESPACES_LIST_DATA}/${ir_checks_outfile}"
 
-            while read line; do
-                ingress=`echo "$line" | awk -F' ' '{print $1}'`
-                if [[ $IS_OCP -eq 0 ]]; then
-                    endpoint=`echo "$line" | awk -F' ' '{print $3}'`
+    if [[ ${#OUTPUT1} -gt 0 && ! -f $IR_OUTFILE && ! -f $IR_CHECKS_OUTFILE ]]; then
+        echo "$OUTPUT1" > $IR_OUTFILE
+
+        #check if portal pods are available to use nslookup
+        OUTPUT2=`kubectl get pods -n $NAMESPACE 2>/dev/null | egrep "apic-portal-www|apim-v2|analytics-client" | head -n1`
+        if [[ ${#OUTPUT2} -gt 0 ]]; then
+            nslookup_pod=`echo "${OUTPUT2}" | awk '{print $1}'`
+        fi
+
+        #determine host column
+        title_column=`echo "${OUTPUT1}" | head -n1`
+        column_count=`echo "${title_column}" | awk '{print NF}'`
+        pos=1
+        while [ $pos -lt $column_count ]; do
+            token=`echo "${title_column}" | awk -v p=$pos '{print $p}'`
+            if [[ "${token}" == *"HOST"* ]]; then
+                break
+            fi
+            pos=$(( $pos + 1 ))
+        done
+
+        #check hosts
+        if [[ ${#nslookup_pod} -gt 0 && $pos -lt $column_count ]]; then
+            ingress_list=`echo "${OUTPUT1}" | grep -v NAME | awk -v p=$pos '{print $p}' | uniq`
+            at_start=1
+            while read ingress; do
+                nslookup_output=`kubectl exec -n $NAMESPACE $nslookup_pod -- nslookup $ingress 2>&1`
+                if [[ $at_start -eq 1 ]]; then
+                    echo -e "${nslookup_output}" > $IR_CHECKS_OUTFILE
                 else
-                    endpoint=`echo "$line" | awk -F' ' '{print $2}'`
+                    echo -e "\n\n===============\n\n${nslookup_output}" >> $IR_CHECKS_OUTFILE
                 fi
-
-                if [[ "$ingress" != "NAME" ]]; then
-                    OUTPUT2=`kubectl exec -n $PORTAL_NAMESPACE -c admin $PORTAL_PODNAME -- nslookup $endpoint`
-                    [[ ${#OUTPUT2} -eq 0 ]] || echo -e "$ nslookup ${endpoint}\n${OUTPUT2}\n\n" >> "${K8S_NAMESPACES_LIST_DATA}/${outfile}"
-                fi
-            done <<< "$OUTPUT1"
+                at_start=0
+            done <<< "$ingress_list"
         fi
     fi
 
